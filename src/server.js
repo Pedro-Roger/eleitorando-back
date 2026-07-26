@@ -1,6 +1,7 @@
 require('dotenv').config();
 const path = require('path');
 const express = require('express');
+require('express-async-errors'); // encaminha erros de rotas async pro middleware de erro, em vez de derrubar o processo
 const cors = require('cors');
 
 const { auth, blockIfMustChangePassword } = require('./middleware/auth');

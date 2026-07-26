@@ -54,8 +54,8 @@ router.post('/', requireRole('ADMIN'), async (req, res) => {
   res.status(201).json({ candidate, message: 'Candidato cadastrado com sucesso.' });
 });
 
-// Edição — administrador e cabo eleitoral
-router.patch('/:id', requireRole('ADMIN', 'CABO'), async (req, res) => {
+// Edição — somente o administrador
+router.patch('/:id', requireRole('ADMIN'), async (req, res) => {
   const candidate = await prisma.candidate.findUnique({ where: { id: Number(req.params.id) } });
   if (!candidate || candidate.deletedAt) return res.status(404).json({ error: 'Candidato não encontrado.' });
 
@@ -86,10 +86,10 @@ router.patch('/:id', requireRole('ADMIN', 'CABO'), async (req, res) => {
   res.json({ candidate: updated });
 });
 
-// Exclusão (soft delete) — administrador e cabo eleitoral. O registro não é apagado
+// Exclusão (soft delete) — somente o administrador. O registro não é apagado
 // do banco: fica marcado como removido e some das listagens, mas eleitores que já
 // apontavam este candidato mantêm o histórico da intenção de voto.
-router.delete('/:id', requireRole('ADMIN', 'CABO'), async (req, res) => {
+router.delete('/:id', requireRole('ADMIN'), async (req, res) => {
   const candidate = await prisma.candidate.findUnique({ where: { id: Number(req.params.id) } });
   if (!candidate || candidate.deletedAt) return res.status(404).json({ error: 'Candidato não encontrado.' });
 
