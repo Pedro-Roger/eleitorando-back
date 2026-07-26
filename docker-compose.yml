@@ -1,0 +1,36 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: eleitorando
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-eleitorando}
+      POSTGRES_DB: eleitorando
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eleitorando -d eleitorando"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://eleitorando:${POSTGRES_PASSWORD:-eleitorando}@db:5432/eleitorando?schema=public
+      JWT_SECRET: ${JWT_SECRET:-troque-este-segredo-em-producao}
+      PORT: 3333
+    ports:
+      - "3333:3333"
+    volumes:
+      - api_uploads:/app/uploads
+
+volumes:
+  db_data:
+  api_uploads:
