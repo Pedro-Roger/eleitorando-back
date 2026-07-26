@@ -1,0 +1,112 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  ADMIN
+  CABO
+  SUBCABO
+}
+
+model User {
+  id                 Int       @id @default(autoincrement())
+  name               String
+  username           String    @unique
+  passwordHash       String
+  phone              String?
+  email              String?
+  role               Role
+  state              String
+  city               String
+  neighborhood       String?
+  active             Boolean   @default(true)
+  mustChangePassword Boolean   @default(true)
+
+  // Cabo responsável (apenas para SUBCABO)
+  parentId Int?
+  parent   User?  @relation("Hierarchy", fields: [parentId], references: [id])
+  subcabos User[] @relation("Hierarchy")
+
+  // Quem realizou o cadastro
+  createdById Int?
+  createdBy   User?  @relation("Creator", fields: [createdById], references: [id])
+  created     User[] @relation("Creator")
+
+  voters     Voter[]
+  activities Activity[]
+  candidatesCreated Candidate[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("users")
+}
+
+model Candidate {
+  id       Int     @id @default(autoincrement())
+  name     String
+  party    String
+  photoUrl String?
+  active   Boolean @default(true)
+  deletedAt DateTime?
+
+  createdById Int
+  createdBy   User @relation(fields: [createdById], references: [id])
+
+  voters Voter[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("candidates")
+}
+
+model Voter {
+  id           Int     @id @default(autoincrement())
+  name         String
+  phone        String?
+  state        String
+  city         String
+  neighborhood String?
+  gender       String?
+  age          Int?
+  zone         String?
+  section      String?
+  notes        String?
+
+  // Candidato para o qual o eleitor demonstrou intenção de voto
+  candidateId Int?
+  candidate   Candidate? @relation(fields: [candidateId], references: [id], onDelete: SetNull)
+
+  createdById Int
+  createdBy   User @relation(fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("voters")
+}
+
+model Activity {
+  id     Int    @id @default(autoincrement())
+  action String
+  detail String
+  userId Int
+  user   User   @relation(fields: [userId], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@map("activities")
+}
+
+model Setting {
+  key   String @id
+  value String
+
+  @@map("settings")
+}
