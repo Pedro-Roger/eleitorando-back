@@ -99,7 +99,7 @@ router.get('/demographics', async (req, res) => {
     const subs = await prisma.user.findMany({ where: { parentId: u.id }, select: { id: true } });
     ids = [u.id, ...subs.map((s) => s.id)];
   }
-  const base = () => (ids ? knex('voters').whereIn('createdById', ids) : knex('voters'));
+  const base = () => (ids ? knex('voters').whereIn('voters.createdById', ids) : knex('voters'));
 
   const [{ count: total }] = await base().count();
   const byGender = await base()
