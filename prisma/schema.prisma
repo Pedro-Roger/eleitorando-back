@@ -26,6 +26,7 @@ model User {
   neighborhood       String?
   active             Boolean   @default(true)
   mustChangePassword Boolean   @default(true)
+  deletedAt          DateTime?
 
   // Cabo responsável (apenas para SUBCABO)
   parentId Int?

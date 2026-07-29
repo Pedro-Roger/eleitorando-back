@@ -16,7 +16,7 @@ const startOfToday = () => {
 // admin gerencia cabos e subcabos; cabo gerencia apenas os próprios subcabos.
 async function getManagedTarget(req, res) {
   const target = await prisma.user.findUnique({ where: { id: Number(req.params.id) } });
-  if (!target) {
+  if (!target || target.deletedAt) {
     res.status(404).json({ error: 'Usuário não encontrado.' });
     return null;
   }
@@ -34,10 +34,10 @@ router.get('/', async (req, res) => {
 
   if (req.user.role === 'ADMIN') {
     const cabos = await prisma.user.findMany({
-      where: { role: 'CABO' },
+      where: { role: 'CABO', deletedAt: null },
       orderBy: { createdAt: 'desc' },
       include: {
-        subcabos: { select: { id: true } },
+        subcabos: { where: { deletedAt: null }, select: { id: true } },
         _count: { select: { voters: true } },
       },
     });
@@ -54,7 +54,7 @@ router.get('/', async (req, res) => {
 
   // CABO: apenas os próprios subcabos
   const subs = await prisma.user.findMany({
-    where: { role: 'SUBCABO', parentId: req.user.id },
+    where: { role: 'SUBCABO', parentId: req.user.id, deletedAt: null },
     orderBy: { createdAt: 'desc' },
     include: { _count: { select: { voters: true } } },
   });
@@ -73,7 +73,7 @@ router.get('/', async (req, res) => {
 // Todos os subcabos (visão do administrador, com o cabo responsável)
 router.get('/subcabos', requireRole('ADMIN'), async (req, res) => {
   const subs = await prisma.user.findMany({
-    where: { role: 'SUBCABO' },
+    where: { role: 'SUBCABO', deletedAt: null },
     orderBy: { createdAt: 'desc' },
     include: {
       parent: { select: { id: true, name: true } },
@@ -94,7 +94,7 @@ router.get('/:id', async (req, res) => {
   if (!target) return;
 
   const subcabos = await prisma.user.findMany({
-    where: { parentId: target.id },
+    where: { parentId: target.id, deletedAt: null },
     include: { _count: { select: { voters: true } } },
   });
   const subIds = subcabos.map((s) => s.id);
@@ -242,6 +242,29 @@ router.post('/:id/reset-password', async (req, res) => {
   });
   await logActivity(req.user.id, 'SENHA_REDEFINIDA', `${req.user.name} redefiniu a senha de ${target.name}`);
   res.json({ ok: true, initialPassword: newPassword, message: 'Senha redefinida. O usuário deverá trocá-la no próximo acesso.' });
+});
+
+// Exclusão (soft delete) — mesmo escopo de gestão do PATCH: admin exclui cabos/subcabos,
+// cabo exclui apenas os próprios subcabos. O registro não é apagado do banco: fica marcado
+// como removido e some das listagens, mas o histórico de atividades e os eleitores já
+// cadastrados por essa pessoa continuam intactos. O usuário libera o nome de usuário
+// (renomeado internamente) para que possa ser reaproveitado em um novo cadastro.
+router.delete('/:id', async (req, res) => {
+  const target = await getManagedTarget(req, res);
+  if (!target) return;
+
+  await prisma.user.update({
+    where: { id: target.id },
+    data: {
+      deletedAt: new Date(),
+      active: false,
+      username: `${target.username}__excluido_${Date.now()}`,
+    },
+  });
+
+  const label = target.role === 'CABO' ? 'o cabo eleitoral' : 'o subcabo';
+  await logActivity(req.user.id, 'USUARIO_EXCLUIDO', `${req.user.name} excluiu ${label} ${target.name}`);
+  res.json({ ok: true, message: `${target.role === 'CABO' ? 'Cabo eleitoral' : 'Subcabo'} excluído.` });
 });
 
 module.exports = router;

@@ -17,8 +17,8 @@ router.get('/', async (req, res) => {
 
   if (u.role === 'ADMIN') {
     const [{ count: totalVoters }] = await knex('voters').count();
-    const [{ count: totalCabos }] = await knex('users').where({ role: 'CABO' }).count();
-    const [{ count: totalSubcabos }] = await knex('users').where({ role: 'SUBCABO' }).count();
+    const [{ count: totalCabos }] = await knex('users').where({ role: 'CABO', deletedAt: null }).count();
+    const [{ count: totalSubcabos }] = await knex('users').where({ role: 'SUBCABO', deletedAt: null }).count();
     const [{ count: votersToday }] = await knex('voters').where('createdAt', '>=', todayStart()).count();
     const byState = await knex('voters')
       .select('state')
@@ -43,9 +43,12 @@ router.get('/', async (req, res) => {
   }
 
   if (u.role === 'CABO') {
-    const subs = await prisma.user.findMany({ where: { parentId: u.id }, select: { id: true, name: true } });
-    const subIds = subs.map((s) => s.id);
-    const teamIds = [u.id, ...subIds];
+    // Escopo de contagem inclui subcabos excluídos (histórico de eleitores não desaparece);
+    // já a listagem "Desempenho por subcabo" mostra só quem está ativo hoje.
+    const allSubs = await prisma.user.findMany({ where: { parentId: u.id }, select: { id: true, name: true, deletedAt: true } });
+    const activeSubs = allSubs.filter((s) => !s.deletedAt);
+    const allSubIds = allSubs.map((s) => s.id);
+    const teamIds = [u.id, ...allSubIds];
 
     const [{ count: teamVoters }] = await knex('voters').whereIn('createdById', teamIds).count();
     const [{ count: ownVoters }] = await knex('voters').where({ createdById: u.id }).count();
@@ -53,9 +56,9 @@ router.get('/', async (req, res) => {
       .whereIn('createdById', teamIds)
       .where('createdAt', '>=', todayStart())
       .count();
-    const bySub = subIds.length
+    const bySub = allSubIds.length
       ? await knex('voters')
-          .whereIn('createdById', subIds)
+          .whereIn('createdById', allSubIds)
           .select('createdById')
           .count('* as total')
           .groupBy('createdById')
@@ -67,8 +70,8 @@ router.get('/', async (req, res) => {
       teamVoters: Number(teamVoters),
       ownVoters: Number(ownVoters),
       votersToday: Number(votersToday),
-      subcabosCount: subIds.length,
-      bySubcabo: subs.map((s) => ({ id: s.id, name: s.name, total: bySubMap[s.id] || 0 })),
+      subcabosCount: activeSubs.length,
+      bySubcabo: activeSubs.map((s) => ({ id: s.id, name: s.name, total: bySubMap[s.id] || 0 })),
     });
   }
 
