@@ -6,8 +6,6 @@ services:
       POSTGRES_USER: eleitorando
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-eleitorando}
       POSTGRES_DB: eleitorando
-    ports:
-      - "5432:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
     healthcheck:
