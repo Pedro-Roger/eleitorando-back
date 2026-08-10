@@ -10,6 +10,7 @@ const userRoutes = require('./routes/users');
 const voterRoutes = require('./routes/voters');
 const dashboardRoutes = require('./routes/dashboard');
 const candidateRoutes = require('./routes/candidates');
+const exportRoutes = require('./routes/export');
 const miscRoutes = require('./routes/misc');
 
 const app = express();
@@ -24,6 +25,7 @@ app.use('/users', auth, blockIfMustChangePassword, userRoutes);
 app.use('/voters', auth, blockIfMustChangePassword, voterRoutes);
 app.use('/dashboard', auth, blockIfMustChangePassword, dashboardRoutes);
 app.use('/candidates', auth, blockIfMustChangePassword, candidateRoutes);
+app.use('/export', auth, blockIfMustChangePassword, exportRoutes);
 app.use('/', auth, blockIfMustChangePassword, miscRoutes);
 
 // eslint-disable-next-line no-unused-vars

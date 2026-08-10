@@ -24,6 +24,8 @@ model User {
   state              String
   city               String
   neighborhood       String?
+  zone               String?
+  section            String?
   active             Boolean   @default(true)
   mustChangePassword Boolean   @default(true)
   deletedAt          DateTime?

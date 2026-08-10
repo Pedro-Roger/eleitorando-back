@@ -17,6 +17,18 @@ async function scopeIds(user) {
   return null; // admin: sem filtro
 }
 
+// Telefone é único entre eleitores. A comparação usa apenas os dígitos,
+// pois o campo é salvo com máscara ("(85) 99999-9999").
+async function phoneInUse(phone, exceptId) {
+  const digits = String(phone).replace(/\D/g, '');
+  if (!digits) return false;
+  const rows = await prisma.$queryRaw`
+    SELECT id FROM voters
+    WHERE regexp_replace(coalesce(phone, ''), '\\D', '', 'g') = ${digits}
+    LIMIT 2`;
+  return rows.some((r) => r.id !== exceptId);
+}
+
 router.get('/', async (req, res) => {
   const ids = await scopeIds(req.user);
   const { state, city, search, createdById } = req.query;
@@ -55,6 +67,10 @@ router.post('/', async (req, res) => {
   const bairroSetting = await prisma.setting.findUnique({ where: { key: 'bairroObrigatorioEleitor' } });
   if (bairroSetting?.value === 'true' && (!neighborhood || !String(neighborhood).trim())) {
     return res.status(400).json({ error: 'O campo Bairro é obrigatório no cadastro de eleitor.' });
+  }
+
+  if (phone && (await phoneInUse(phone))) {
+    return res.status(409).json({ error: 'Número de telefone já cadastrado.' });
   }
 
   let candidate = null;
@@ -108,6 +124,10 @@ router.patch('/:id', async (req, res) => {
   const effectiveNeighborhood = neighborhood !== undefined ? neighborhood : voter.neighborhood;
   if (bairroSetting?.value === 'true' && (!effectiveNeighborhood || !String(effectiveNeighborhood).trim())) {
     return res.status(400).json({ error: 'O campo Bairro é obrigatório no cadastro de eleitor.' });
+  }
+
+  if (phone !== undefined && phone && (await phoneInUse(phone, voter.id))) {
+    return res.status(409).json({ error: 'Número de telefone já cadastrado.' });
   }
 
   let candidateIdValue = voter.candidateId;

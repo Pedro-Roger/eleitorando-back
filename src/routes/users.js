@@ -128,7 +128,7 @@ router.get('/:id', async (req, res) => {
 // Criação de usuário: somente o ADMIN cria cabos e subcabos.
 // Ao criar um subcabo, o admin escolhe o cabo responsável (parentId).
 router.post('/', requireRole('ADMIN'), async (req, res) => {
-  const { name, username, password, confirmPassword, phone, state, city, neighborhood, active, role, parentId } =
+  const { name, username, password, confirmPassword, phone, state, city, neighborhood, zone, section, active, role, parentId } =
     req.body || {};
 
   const newRole = role === 'SUBCABO' ? 'SUBCABO' : 'CABO';
@@ -167,6 +167,8 @@ router.post('/', requireRole('ADMIN'), async (req, res) => {
       state: String(state).trim(),
       city: String(city).trim(),
       neighborhood: neighborhood ? String(neighborhood).trim() : null,
+      zone: zone ? String(zone).trim() : null,
+      section: section ? String(section).trim() : null,
       active: active !== false,
       mustChangePassword: true,
       parentId: parent ? parent.id : null,
@@ -189,7 +191,7 @@ router.patch('/:id', async (req, res) => {
   const target = await getManagedTarget(req, res);
   if (!target) return;
 
-  const { name, phone, state, city, neighborhood, active } = req.body || {};
+  const { name, phone, state, city, neighborhood, zone, section, active } = req.body || {};
   const data = {};
   if (name !== undefined) {
     if (!String(name).trim()) return res.status(400).json({ error: 'O nome não pode ficar vazio.' });
@@ -205,6 +207,8 @@ router.patch('/:id', async (req, res) => {
     data.city = String(ct).trim();
   }
   if (neighborhood !== undefined) data.neighborhood = neighborhood ? String(neighborhood).trim() : null;
+  if (zone !== undefined) data.zone = zone ? String(zone).trim() : null;
+  if (section !== undefined) data.section = section ? String(section).trim() : null;
   if (active !== undefined) data.active = Boolean(active);
 
   const updated = await prisma.user.update({ where: { id: target.id }, data });
