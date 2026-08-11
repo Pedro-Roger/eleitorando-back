@@ -125,15 +125,20 @@ router.get('/:id', async (req, res) => {
   });
 });
 
-// Criação de usuário: somente o ADMIN cria cabos e subcabos.
-// Ao criar um subcabo, o admin escolhe o cabo responsável (parentId).
-router.post('/', requireRole('ADMIN'), async (req, res) => {
+// Criação de usuário: o ADMIN cria cabos e subcabos (escolhendo o cabo responsável);
+// um CABO pode criar subcabos, sempre vinculados a ele mesmo.
+router.post('/', requireRole('ADMIN', 'CABO'), async (req, res) => {
   const { name, username, password, confirmPassword, phone, state, city, neighborhood, zone, section, active, role, parentId } =
     req.body || {};
 
   const newRole = role === 'SUBCABO' ? 'SUBCABO' : 'CABO';
   let parent = null;
-  if (newRole === 'SUBCABO') {
+  if (req.user.role === 'CABO') {
+    if (newRole !== 'SUBCABO') {
+      return res.status(403).json({ error: 'Cabos eleitorais só podem criar subcabos.' });
+    }
+    parent = await prisma.user.findUnique({ where: { id: req.user.id } });
+  } else if (newRole === 'SUBCABO') {
     parent = await prisma.user.findUnique({ where: { id: Number(parentId) || 0 } });
     if (!parent || parent.role !== 'CABO') {
       return res.status(400).json({ error: 'Selecione o cabo responsável pelo subcabo.' });
