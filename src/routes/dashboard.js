@@ -92,6 +92,52 @@ router.get('/', async (req, res) => {
   });
 });
 
+// Listas dos cartões do painel inicial (admin) — o front abre em modal.
+// type: voters | today | cabos | subcabos
+router.get('/list', requireRole('ADMIN'), async (req, res) => {
+  const type = String(req.query.type || '');
+
+  if (type === 'voters' || type === 'today') {
+    const where = type === 'today' ? { createdAt: { gte: todayStart() } } : {};
+    const total = await prisma.voter.count({ where });
+    const voters = await prisma.voter.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: 300,
+      include: { createdBy: { select: { name: true } } },
+    });
+    return res.json({
+      total,
+      items: voters.map((v) => ({
+        id: v.id,
+        title: v.name,
+        subtitle: `${v.city}/${v.state} · por ${v.createdBy?.name || '—'}`,
+      })),
+    });
+  }
+
+  if (type === 'cabos' || type === 'subcabos') {
+    const role = type === 'cabos' ? 'CABO' : 'SUBCABO';
+    const users = await prisma.user.findMany({
+      where: { role, deletedAt: null },
+      orderBy: { name: 'asc' },
+      include: { parent: { select: { name: true } }, _count: { select: { voters: true } } },
+    });
+    return res.json({
+      total: users.length,
+      items: users.map((u) => ({
+        id: u.id,
+        title: u.name,
+        subtitle:
+          `${u.city}/${u.state} · ${u._count.voters} eleitor(es)` +
+          (u.parent ? ` · Cabo: ${u.parent.name}` : ''),
+      })),
+    });
+  }
+
+  res.status(400).json({ error: 'Tipo de lista inválido.' });
+});
+
 // Painel demográfico geral — escopo por perfil:
 // admin vê toda a campanha; cabo vê a equipe dele; subcabo vê os próprios registros
 router.get('/demographics', async (req, res) => {
