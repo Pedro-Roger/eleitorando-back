@@ -31,7 +31,7 @@ async function phoneInUse(phone, exceptId) {
 
 router.get('/', async (req, res) => {
   const ids = await scopeIds(req.user);
-  const { state, city, search, createdById } = req.query;
+  const { state, city, search, createdById, createdByIds } = req.query;
 
   const where = {};
   if (ids) where.createdById = { in: ids };
@@ -39,6 +39,19 @@ router.get('/', async (req, res) => {
     const cid = Number(createdById);
     if (ids && !ids.includes(cid)) return res.status(403).json({ error: 'Sem permissão para este filtro.' });
     where.createdById = cid;
+  }
+  // Filtro por vários cadastradores (ex.: um cabo + seus subcabos), respeitando o escopo do perfil
+  if (createdByIds) {
+    const list = String(createdByIds)
+      .split(',')
+      .map((s) => Number(s))
+      .filter((n) => Number.isInteger(n) && n > 0);
+    if (list.length) {
+      if (ids && list.some((id) => !ids.includes(id))) {
+        return res.status(403).json({ error: 'Sem permissão para este filtro.' });
+      }
+      where.createdById = { in: list };
+    }
   }
   if (state) where.state = state;
   if (city) where.city = city;
