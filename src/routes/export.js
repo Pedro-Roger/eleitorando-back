@@ -22,6 +22,7 @@ const COLUMNS = {
   zone: { label: 'Zona', get: (v) => v.zone || '' },
   section: { label: 'Seção', get: (v) => v.section || '' },
   createdBy: { label: 'Cadastrado por', get: (v) => v.createdBy?.name || '' },
+  cabo: { label: 'Cabo responsável', get: (v) => v.caboGroup || '' },
 };
 
 // Opções para montar a tela: árvore cabo→subcabos e valores existentes p/ filtros
@@ -108,8 +109,26 @@ router.get('/voters', async (req, res) => {
   const voters = await prisma.voter.findMany({
     where,
     orderBy: { name: 'asc' },
-    include: { createdBy: { select: { name: true } } },
+    include: { createdBy: { select: { name: true, role: true, parentId: true } } },
   });
+
+  // Agrupa por cabo responsável: eleitores do cabo e dos seus subcabos ficam juntos.
+  // Inclui cabos já excluídos (dado histórico); cadastros do admin formam grupo próprio.
+  const cabosAll = await prisma.user.findMany({ where: { role: 'CABO' }, select: { id: true, name: true } });
+  const caboName = new Map(cabosAll.map((c) => [c.id, c.name]));
+  voters.forEach((v) => {
+    const c = v.createdBy;
+    if (!c) v.caboGroup = 'Sem responsável';
+    else if (c.role === 'CABO') v.caboGroup = c.name;
+    else if (c.role === 'SUBCABO') v.caboGroup = caboName.get(c.parentId) || c.name;
+    else v.caboGroup = 'Administração';
+  });
+  voters.sort(
+    (a, b) => a.caboGroup.localeCompare(b.caboGroup, 'pt-BR') || a.name.localeCompare(b.name, 'pt-BR')
+  );
+  const groupLabel = (g) => (g === 'Administração' || g === 'Sem responsável' ? g : `Cabo: ${g}`);
+  const groupCount = new Map();
+  voters.forEach((v) => groupCount.set(v.caboGroup, (groupCount.get(v.caboGroup) || 0) + 1));
 
   const today = new Date().toISOString().slice(0, 10);
   const filename = `eleitores-${today}`;
@@ -151,7 +170,15 @@ router.get('/voters', async (req, res) => {
     }));
     ws.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
     ws.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF4F46E5' } };
+    let lastGroup = null;
     voters.forEach((v) => {
+      if (v.caboGroup !== lastGroup) {
+        lastGroup = v.caboGroup;
+        const r = ws.addRow([`${groupLabel(v.caboGroup)} — ${groupCount.get(v.caboGroup)} eleitor(es)`]);
+        r.font = { bold: true };
+        r.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8E9F5' } };
+        if (colKeys.length > 1) ws.mergeCells(r.number, 1, r.number, colKeys.length);
+      }
       ws.addRow(Object.fromEntries(colKeys.map((k) => [k, COLUMNS[k].get(v)])));
     });
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -203,8 +230,29 @@ router.get('/voters', async (req, res) => {
       doc.x = doc.page.margins.left;
     };
 
+    // Faixa destacada que abre a seção de cada cabo
+    const drawGroupHeader = (group) => {
+      if (doc.y + rowH + 6 > bottom()) doc.addPage();
+      const y = doc.y + 4;
+      doc.rect(doc.page.margins.left, y, usable, rowH).fill('#E8E9F5');
+      doc.font('Helvetica-Bold').fontSize(9).fillColor('#3730a3')
+        .text(`${groupLabel(group)} — ${groupCount.get(group)} eleitor(es)`, doc.page.margins.left + 4, y + 4, {
+          width: usable - 8,
+          lineBreak: false,
+        });
+      doc.y = y + rowH;
+      doc.x = doc.page.margins.left;
+    };
+
     drawRow(cols.map((c) => c.label), true);
-    voters.forEach((v) => drawRow(cols.map((c) => c.get(v)), false));
+    let lastPdfGroup = null;
+    voters.forEach((v) => {
+      if (v.caboGroup !== lastPdfGroup) {
+        lastPdfGroup = v.caboGroup;
+        drawGroupHeader(v.caboGroup);
+      }
+      drawRow(cols.map((c) => c.get(v)), false);
+    });
     doc.end();
     return;
   }

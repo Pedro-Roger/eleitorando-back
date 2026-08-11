@@ -60,6 +60,9 @@ router.get('/', async (req, res) => {
 router.post('/', async (req, res) => {
   const { name, phone, state, city, neighborhood, gender, age, zone, section, candidateId, notes } = req.body || {};
   if (!name || !String(name).trim()) return res.status(400).json({ error: 'Informe o nome do eleitor.' });
+  if (!phone || !String(phone).replace(/\D/g, '')) {
+    return res.status(400).json({ error: 'Informe o número de celular do eleitor.' });
+  }
 
   const locError = requireStateCity(req.body || {});
   if (locError) return res.status(400).json({ error: locError });
@@ -113,6 +116,9 @@ router.patch('/:id', async (req, res) => {
 
   const { name, phone, state, city, neighborhood, gender, age, zone, section, candidateId, notes } = req.body || {};
   if (name !== undefined && !String(name).trim()) return res.status(400).json({ error: 'Informe o nome do eleitor.' });
+  if (phone !== undefined && (!phone || !String(phone).replace(/\D/g, ''))) {
+    return res.status(400).json({ error: 'Informe o número de celular do eleitor.' });
+  }
 
   const locError = requireStateCity({
     state: state !== undefined ? state : voter.state,
