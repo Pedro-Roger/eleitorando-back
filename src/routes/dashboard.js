@@ -92,6 +92,37 @@ router.get('/', async (req, res) => {
   });
 });
 
+// Ranking da equipe (admin): cabos por eleitores da equipe (cabo + subcabos)
+// e subcabos por eleitores próprios. Só quem está ativo no time (não excluído).
+router.get('/ranking', requireRole('ADMIN'), async (req, res) => {
+  const cabos = await knex('users as c')
+    .where('c.role', 'CABO')
+    .whereNull('c.deletedAt')
+    .leftJoin('users as s', 's.parentId', 'c.id')
+    .leftJoin('voters as v', function () {
+      this.on('v.createdById', 'c.id').orOn('v.createdById', 's.id');
+    })
+    .select('c.id', 'c.name', 'c.city')
+    .countDistinct('v.id as total')
+    .groupBy('c.id', 'c.name', 'c.city')
+    .orderBy('total', 'desc');
+
+  const subcabos = await knex('users as s')
+    .where('s.role', 'SUBCABO')
+    .whereNull('s.deletedAt')
+    .leftJoin('users as c', 'c.id', 's.parentId')
+    .leftJoin('voters as v', 'v.createdById', 's.id')
+    .select('s.id', 's.name', 's.city', 'c.name as caboName')
+    .count('v.id as total')
+    .groupBy('s.id', 's.name', 's.city', 'c.name')
+    .orderBy('total', 'desc');
+
+  res.json({
+    cabos: cabos.map((r) => ({ ...r, total: Number(r.total) })),
+    subcabos: subcabos.map((r) => ({ ...r, total: Number(r.total) })),
+  });
+});
+
 // Listas dos cartões do painel inicial (admin) — o front abre em modal.
 // type: voters | today | cabos | subcabos
 router.get('/list', requireRole('ADMIN'), async (req, res) => {
