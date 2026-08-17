@@ -152,7 +152,7 @@ router.post('/', requireRole('ADMIN', 'CABO'), async (req, res) => {
   if (locError) return res.status(400).json({ error: locError });
 
   if (!validPassword(password)) {
-    return res.status(400).json({ error: 'A senha deve ter no mínimo 8 caracteres, com letras e números.' });
+    return res.status(400).json({ error: 'A senha deve conter ao menos um número.' });
   }
   if (password !== confirmPassword) {
     return res.status(400).json({ error: 'A confirmação de senha não confere.' });
@@ -243,7 +243,7 @@ router.post('/:id/reset-password', async (req, res) => {
 
   const { newPassword } = req.body || {};
   if (!validPassword(newPassword)) {
-    return res.status(400).json({ error: 'A senha deve ter no mínimo 8 caracteres, com letras e números.' });
+    return res.status(400).json({ error: 'A senha deve conter ao menos um número.' });
   }
   await prisma.user.update({
     where: { id: target.id },

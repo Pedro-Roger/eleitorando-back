@@ -1,8 +1,8 @@
 const prisma = require('../db/prisma');
 
 function validPassword(pw) {
-  // critérios mínimos: 8+ caracteres, ao menos uma letra e um número
-  return typeof pw === 'string' && pw.length >= 8 && /[a-zA-Z]/.test(pw) && /\d/.test(pw);
+  // critério mínimo: ao menos um número
+  return typeof pw === 'string' && pw.length > 0 && /\d/.test(pw);
 }
 
 function requireStateCity(body) {

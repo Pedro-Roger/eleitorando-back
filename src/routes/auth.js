@@ -29,7 +29,7 @@ router.post('/change-password', auth, async (req, res) => {
     return res.status(400).json({ error: 'Senha atual incorreta.' });
   }
   if (!validPassword(newPassword)) {
-    return res.status(400).json({ error: 'A nova senha deve ter no mínimo 8 caracteres, com letras e números.' });
+    return res.status(400).json({ error: 'A nova senha deve conter ao menos um número.' });
   }
   await prisma.user.update({
     where: { id: req.user.id },
