@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const prisma = require('../db/prisma');
-const { requireStateCity, logActivity } = require('../lib/helpers');
+const { logActivity } = require('../lib/helpers');
+const zonaSecaoCE = require('../data/ce-zona-secao.json');
 
 const router = Router();
 
@@ -31,9 +32,14 @@ async function phoneInUse(phone, exceptId) {
 
 router.get('/', async (req, res) => {
   const ids = await scopeIds(req.user);
-  const { state, city, search, createdById, createdByIds } = req.query;
+  const { state, city, neighborhood, search, createdById, createdByIds, today } = req.query;
 
   const where = {};
+  if (today === '1') {
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    where.createdAt = { gte: start };
+  }
   if (ids) where.createdById = { in: ids };
   if (createdById) {
     const cid = Number(createdById);
@@ -55,6 +61,7 @@ router.get('/', async (req, res) => {
   }
   if (state) where.state = state;
   if (city) where.city = city;
+  if (neighborhood) where.neighborhood = { equals: String(neighborhood).trim(), mode: 'insensitive' };
   if (search) where.name = { contains: String(search), mode: 'insensitive' };
 
   const voters = await prisma.voter.findMany({
@@ -70,15 +77,43 @@ router.get('/', async (req, res) => {
   res.json({ voters, total });
 });
 
+// Opções para os filtros de cidade e bairro: apenas valores que existem
+// entre os eleitores visíveis para o perfil (mesmo escopo da listagem)
+router.get('/filter-options', async (req, res) => {
+  const ids = await scopeIds(req.user);
+  const rows = await prisma.voter.findMany({
+    where: ids ? { createdById: { in: ids } } : {},
+    select: { state: true, city: true, neighborhood: true },
+    distinct: ['state', 'city', 'neighborhood'],
+  });
+
+  const byCity = new Map();
+  for (const r of rows) {
+    const key = `${r.state}|${r.city}`;
+    if (!byCity.has(key)) byCity.set(key, { state: r.state, city: r.city, neighborhoods: new Set() });
+    const n = (r.neighborhood || '').trim();
+    if (n) byCity.get(key).neighborhoods.add(n);
+  }
+  const cities = [...byCity.values()]
+    .map((c) => ({ ...c, neighborhoods: [...c.neighborhoods].sort((a, b) => a.localeCompare(b)) }))
+    .sort((a, b) => (a.city || '').localeCompare(b.city || ''));
+  res.json({ cities });
+});
+
+// Autocompleta cidade/bairro a partir de zona+seção eleitoral, usando a tabela oficial
+// do TRE-CE (locais de votação por zona/seção). Só cobre o Ceará por enquanto.
+router.get('/lookup-zona-secao', (req, res) => {
+  const zone = String(req.query.zone || '').replace(/\D/g, '');
+  const section = String(req.query.section || '').replace(/\D/g, '');
+  if (!zone || !section) return res.json({ match: null });
+
+  const key = `${Number(zone)}-${Number(section)}`;
+  const match = zonaSecaoCE[key] || null;
+  res.json({ match });
+});
+
 router.post('/', async (req, res) => {
   const { name, phone, state, city, neighborhood, gender, age, zone, section, candidateId, notes } = req.body || {};
-  if (!name || !String(name).trim()) return res.status(400).json({ error: 'Informe o nome do eleitor.' });
-  if (!phone || !String(phone).replace(/\D/g, '')) {
-    return res.status(400).json({ error: 'Informe o número de celular do eleitor.' });
-  }
-
-  const locError = requireStateCity(req.body || {});
-  if (locError) return res.status(400).json({ error: locError });
 
   const bairroSetting = await prisma.setting.findUnique({ where: { key: 'bairroObrigatorioEleitor' } });
   if (bairroSetting?.value === 'true' && (!neighborhood || !String(neighborhood).trim())) {
@@ -97,10 +132,10 @@ router.post('/', async (req, res) => {
 
   const voter = await prisma.voter.create({
     data: {
-      name: String(name).trim(),
+      name: name ? String(name).trim() : null,
       phone: phone ? String(phone).trim() : null,
-      state: String(state).trim(),
-      city: String(city).trim(),
+      state: state ? String(state).trim() : null,
+      city: city ? String(city).trim() : null,
       neighborhood: neighborhood ? String(neighborhood).trim() : null,
       gender: gender ? String(gender).trim() : null,
       age: age !== undefined && age !== null && age !== '' ? Number(age) : null,
@@ -112,7 +147,9 @@ router.post('/', async (req, res) => {
     },
   });
 
-  await logActivity(req.user.id, 'ELEITOR_CADASTRADO', `${req.user.name} cadastrou o eleitor ${voter.name} (${voter.city}/${voter.state})`);
+  const voterLabel = voter.name || 'sem nome';
+  const voterLocation = voter.city || voter.state ? ` (${voter.city || '?'}/${voter.state || '?'})` : '';
+  await logActivity(req.user.id, 'ELEITOR_CADASTRADO', `${req.user.name} cadastrou o eleitor ${voterLabel}${voterLocation}`);
   res.status(201).json({ voter, message: 'Eleitor cadastrado com sucesso.' });
 });
 
@@ -128,16 +165,6 @@ router.patch('/:id', async (req, res) => {
   }
 
   const { name, phone, state, city, neighborhood, gender, age, zone, section, candidateId, notes } = req.body || {};
-  if (name !== undefined && !String(name).trim()) return res.status(400).json({ error: 'Informe o nome do eleitor.' });
-  if (phone !== undefined && (!phone || !String(phone).replace(/\D/g, ''))) {
-    return res.status(400).json({ error: 'Informe o número de celular do eleitor.' });
-  }
-
-  const locError = requireStateCity({
-    state: state !== undefined ? state : voter.state,
-    city: city !== undefined ? city : voter.city,
-  });
-  if (locError) return res.status(400).json({ error: locError });
 
   const bairroSetting = await prisma.setting.findUnique({ where: { key: 'bairroObrigatorioEleitor' } });
   const effectiveNeighborhood = neighborhood !== undefined ? neighborhood : voter.neighborhood;
@@ -161,10 +188,10 @@ router.patch('/:id', async (req, res) => {
   }
 
   const data = { candidateId: candidateIdValue };
-  if (name !== undefined) data.name = String(name).trim();
+  if (name !== undefined) data.name = name ? String(name).trim() : null;
   if (phone !== undefined) data.phone = phone ? String(phone).trim() : null;
-  if (state !== undefined) data.state = String(state).trim();
-  if (city !== undefined) data.city = String(city).trim();
+  if (state !== undefined) data.state = state ? String(state).trim() : null;
+  if (city !== undefined) data.city = city ? String(city).trim() : null;
   if (neighborhood !== undefined) data.neighborhood = neighborhood ? String(neighborhood).trim() : null;
   if (gender !== undefined) data.gender = gender ? String(gender).trim() : null;
   if (age !== undefined) data.age = age !== null && age !== '' ? Number(age) : null;
@@ -181,7 +208,7 @@ router.patch('/:id', async (req, res) => {
     },
   });
 
-  await logActivity(req.user.id, 'ELEITOR_EDITADO', `${req.user.name} editou o eleitor ${updated.name}`);
+  await logActivity(req.user.id, 'ELEITOR_EDITADO', `${req.user.name} editou o eleitor ${updated.name || 'sem nome'}`);
   res.json({ voter: updated, message: 'Eleitor atualizado com sucesso.' });
 });
 
@@ -196,7 +223,9 @@ router.delete('/:id', async (req, res) => {
   }
 
   await prisma.voter.delete({ where: { id: voter.id } });
-  await logActivity(req.user.id, 'ELEITOR_EXCLUIDO', `${req.user.name} excluiu o eleitor ${voter.name} (${voter.city}/${voter.state})`);
+  const deletedLabel = voter.name || 'sem nome';
+  const deletedLocation = voter.city || voter.state ? ` (${voter.city || '?'}/${voter.state || '?'})` : '';
+  await logActivity(req.user.id, 'ELEITOR_EXCLUIDO', `${req.user.name} excluiu o eleitor ${deletedLabel}${deletedLocation}`);
   res.json({ ok: true, message: 'Eleitor excluído.' });
 });
 

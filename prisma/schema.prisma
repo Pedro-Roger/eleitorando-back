@@ -71,10 +71,10 @@ model Candidate {
 
 model Voter {
   id           Int     @id @default(autoincrement())
-  name         String
+  name         String?
   phone        String?
-  state        String
-  city         String
+  state        String?
+  city         String?
   neighborhood String?
   gender       String?
   age          Int?
