@@ -1,9 +1,30 @@
 const { Router } = require('express');
 const prisma = require('../db/prisma');
 const { logActivity } = require('../lib/helpers');
-const zonaSecaoCE = require('../data/ce-zona-secao.json');
+const secoesCE = require('../data/ce-secoes.json');
 
 const router = Router();
+
+// Índices em memória pra autofill de zona/seção <-> cidade/bairro (Ceará), montados
+// uma vez a partir da tabela oficial do TRE-CE (api/src/data/ce-secoes.json).
+function normLookup(s) {
+  return String(s || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toUpperCase()
+    .trim();
+}
+
+const zonaSecaoToLocal = new Map(); // "zona-secao" -> { city, neighborhood }
+const cityBairroToSecoes = new Map(); // "CITY|BAIRRO" (normalizado) -> [{ zone, section, local }]
+for (const row of secoesCE) {
+  zonaSecaoToLocal.set(`${row.z}-${row.s}`, { city: row.c, neighborhood: row.b });
+  if (row.b) {
+    const key = `${normLookup(row.c)}|${normLookup(row.b)}`;
+    if (!cityBairroToSecoes.has(key)) cityBairroToSecoes.set(key, []);
+    cityBairroToSecoes.get(key).push({ zone: row.z, section: row.s, local: row.l });
+  }
+}
 
 // Escopo de visualização por perfil:
 // SUBCABO → apenas os próprios registros
@@ -108,8 +129,20 @@ router.get('/lookup-zona-secao', (req, res) => {
   if (!zone || !section) return res.json({ match: null });
 
   const key = `${Number(zone)}-${Number(section)}`;
-  const match = zonaSecaoCE[key] || null;
+  const match = zonaSecaoToLocal.get(key) || null;
   res.json({ match });
+});
+
+// Sentido inverso: a partir de cidade+bairro, lista as zonas/seções possíveis (um
+// bairro cai em várias seções — não é 1 pra 1 como zona+seção -> cidade/bairro).
+router.get('/lookup-city-bairro', (req, res) => {
+  const city = String(req.query.city || '');
+  const neighborhood = String(req.query.neighborhood || '');
+  if (!city || !neighborhood) return res.json({ matches: [] });
+
+  const key = `${normLookup(city)}|${normLookup(neighborhood)}`;
+  const matches = cityBairroToSecoes.get(key) || [];
+  res.json({ matches });
 });
 
 router.post('/', async (req, res) => {
