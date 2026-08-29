@@ -51,6 +51,18 @@ async function phoneInUse(phone, exceptId) {
   return rows.some((r) => r.id !== exceptId);
 }
 
+// Nº do título de eleitor é único entre eleitores (um título = uma pessoa).
+// A comparação usa apenas os dígitos, pois o campo pode vir com espaços/pontos.
+async function titleInUse(titleNumber, exceptId) {
+  const digits = String(titleNumber).replace(/\D/g, '');
+  if (!digits) return false;
+  const rows = await prisma.$queryRaw`
+    SELECT id FROM voters
+    WHERE regexp_replace(coalesce("titleNumber", ''), '\\D', '', 'g') = ${digits}
+    LIMIT 2`;
+  return rows.some((r) => r.id !== exceptId);
+}
+
 router.get('/', async (req, res) => {
   const ids = await scopeIds(req.user);
   const { state, city, neighborhood, search, createdById, createdByIds, today } = req.query;
@@ -146,7 +158,7 @@ router.get('/lookup-city-bairro', (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const { name, phone, state, city, neighborhood, gender, age, zone, section, candidateId, notes } = req.body || {};
+  const { name, phone, state, city, neighborhood, gender, age, zone, section, titleNumber, candidateId, notes } = req.body || {};
 
   const bairroSetting = await prisma.setting.findUnique({ where: { key: 'bairroObrigatorioEleitor' } });
   if (bairroSetting?.value === 'true' && (!neighborhood || !String(neighborhood).trim())) {
@@ -155,6 +167,10 @@ router.post('/', async (req, res) => {
 
   if (phone && (await phoneInUse(phone))) {
     return res.status(409).json({ error: 'Número de telefone já cadastrado.' });
+  }
+
+  if (titleNumber && (await titleInUse(titleNumber))) {
+    return res.status(409).json({ error: 'Número de título de eleitor já cadastrado.' });
   }
 
   let candidate = null;
@@ -174,6 +190,7 @@ router.post('/', async (req, res) => {
       age: age !== undefined && age !== null && age !== '' ? Number(age) : null,
       zone: zone ? String(zone).trim() : null,
       section: section ? String(section).trim() : null,
+      titleNumber: titleNumber ? String(titleNumber).trim() : null,
       candidateId: candidate ? candidate.id : null,
       notes: notes ? String(notes).trim() : null,
       createdById: req.user.id,
@@ -197,7 +214,7 @@ router.patch('/:id', async (req, res) => {
     return res.status(403).json({ error: 'Você não pode editar este registro.' });
   }
 
-  const { name, phone, state, city, neighborhood, gender, age, zone, section, candidateId, notes } = req.body || {};
+  const { name, phone, state, city, neighborhood, gender, age, zone, section, titleNumber, candidateId, notes } = req.body || {};
 
   const bairroSetting = await prisma.setting.findUnique({ where: { key: 'bairroObrigatorioEleitor' } });
   const effectiveNeighborhood = neighborhood !== undefined ? neighborhood : voter.neighborhood;
@@ -207,6 +224,10 @@ router.patch('/:id', async (req, res) => {
 
   if (phone !== undefined && phone && (await phoneInUse(phone, voter.id))) {
     return res.status(409).json({ error: 'Número de telefone já cadastrado.' });
+  }
+
+  if (titleNumber !== undefined && titleNumber && (await titleInUse(titleNumber, voter.id))) {
+    return res.status(409).json({ error: 'Número de título de eleitor já cadastrado.' });
   }
 
   let candidateIdValue = voter.candidateId;
@@ -220,7 +241,7 @@ router.patch('/:id', async (req, res) => {
     }
   }
 
-  const data = { candidateId: candidateIdValue };
+  const data = { candidateId: candidateIdValue, titleNumber: titleNumber ? String(titleNumber).trim() : null };
   if (name !== undefined) data.name = name ? String(name).trim() : null;
   if (phone !== undefined) data.phone = phone ? String(phone).trim() : null;
   if (state !== undefined) data.state = state ? String(state).trim() : null;

@@ -15,17 +15,20 @@
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
+    "axios": "^1.20.0",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "exceljs": "^4.4.0",
     "express": "^4.21.2",
     "express-async-errors": "^3.1.1",
+    "form-data": "^4.0.6",
     "jsonwebtoken": "^9.0.2",
     "knex": "^3.1.0",
     "multer": "^1.4.5-lts.1",
     "pdfkit": "^0.19.1",
-    "pg": "^8.13.1"
+    "pg": "^8.13.1",
+    "security-scan": "^0.1.0"
   },
   "devDependencies": {
     "prisma": "^5.22.0"

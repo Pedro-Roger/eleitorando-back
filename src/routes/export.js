@@ -21,6 +21,7 @@ const COLUMNS = {
   age: { label: 'Idade', get: (v) => (v.age != null ? v.age : '') },
   zone: { label: 'Zona', get: (v) => v.zone || '' },
   section: { label: 'Seção', get: (v) => v.section || '' },
+  titleNumber: { label: 'Nº Título', get: (v) => v.titleNumber || '' },
   createdBy: { label: 'Cadastrado por', get: (v) => v.createdBy?.name || '' },
   cabo: { label: 'Cabo responsável', get: (v) => v.caboGroup || '' },
 };

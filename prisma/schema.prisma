@@ -82,6 +82,8 @@ model Voter {
   section      String?
   notes        String?
 
+  titleNumber String?
+
   // Candidato para o qual o eleitor demonstrou intenção de voto
   candidateId Int?
   candidate   Candidate? @relation(fields: [candidateId], references: [id], onDelete: SetNull)

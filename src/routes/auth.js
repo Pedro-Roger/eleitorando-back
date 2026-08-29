@@ -17,7 +17,8 @@ router.post('/login', async (req, res) => {
   }
   if (!user.active) return res.status(403).json({ error: 'Conta desativada. Fale com seu responsável.' });
 
-  const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET, { expiresIn: '12h' });
+  // Sem expiresIn: sessão não expira, usuário só é deslogado se a conta for desativada.
+  const token = jwt.sign({ id: user.id, role: user.role }, process.env.JWT_SECRET);
   await logActivity(user.id, 'LOGIN', `${user.name} entrou no sistema`);
 
   res.json({ token, user: publicUser(user), mustChangePassword: user.mustChangePassword });
