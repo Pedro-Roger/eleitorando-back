@@ -25,12 +25,28 @@ services:
     environment:
       DATABASE_URL: postgresql://eleitorando:${POSTGRES_PASSWORD:-eleitorando}@db:5432/eleitorando?schema=public
       JWT_SECRET: ${JWT_SECRET:-troque-este-segredo-em-producao}
+      OCR_SERVICE_URL: http://ocr-service:8081
       PORT: 3333
     ports:
       - "3333:3333"
     volumes:
       - api_uploads:/app/uploads
 
+  # Serviço de OCR (EasyOCR + fallback IA). Requer o repo eleitorando-ocr
+  # clonado ao lado deste: ../eleitorando-ocr
+  ocr-service:
+    build: ../eleitorando-ocr
+    restart: unless-stopped
+    environment:
+      PORT: 8081
+      DATABASE_URL: postgresql://eleitorando:${POSTGRES_PASSWORD:-eleitorando}@db:5432/eleitorando
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    ports:
+      - "127.0.0.1:8081:8081"
+    volumes:
+      - ocr_models:/root/.EasyOCR
+
 volumes:
   db_data:
   api_uploads:
+  ocr_models:
