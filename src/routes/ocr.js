@@ -10,6 +10,31 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 
 // Em Docker: http://ocr-service:8081 · Local: http://localhost:8081
 const OCR_SERVICE_URL = process.env.OCR_SERVICE_URL || 'http://localhost:8081';
 
+function normalizeJobForLegacyOcrUi(data) {
+  const job = data?.job;
+  const result = job?.result;
+  if (!job || !result) return data;
+
+  const fields = result.fields || result.reviewDraft?.fields || result.rawResult?.fields;
+  const voters = result.voters || result.reviewDraft?.voters;
+  const status = ['review_required', 'completed', 'confirmed'].includes(job.status) ? 'done' : job.status;
+
+  return {
+    ...data,
+    job: {
+      ...job,
+      status,
+      ocrStatus: job.status,
+      result: {
+        ...result,
+        ...(fields ? { fields } : {}),
+        ...(voters ? { voters } : {}),
+        aiUsed: Boolean(result.aiUsed || result.modelUsed),
+      },
+    },
+  };
+}
+
 // processamento síncrono (mantido p/ compatibilidade) — lento, use /jobs
 router.post('/', upload.single('file'), async (req, res) => {
   if (!req.file) {
@@ -60,7 +85,7 @@ router.post('/jobs', upload.single('file'), async (req, res) => {
 router.get('/jobs/:id', async (req, res) => {
   try {
     const ocrRes = await axios.get(`${OCR_SERVICE_URL}/jobs/${Number(req.params.id)}`, { timeout: 15000 });
-    res.json(ocrRes.data);
+    res.json(normalizeJobForLegacyOcrUi(ocrRes.data));
   } catch (err) {
     console.error('OCR job status error:', err.message);
     res.status(502).json({ error: 'Serviço de OCR indisponível.' });
