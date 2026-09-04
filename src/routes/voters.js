@@ -1,4 +1,5 @@
 const { Router } = require('express');
+const { Prisma } = require('@prisma/client');
 const prisma = require('../db/prisma');
 const { logActivity } = require('../lib/helpers');
 const secoesCE = require('../data/ce-secoes.json');
@@ -201,6 +202,143 @@ router.post('/', async (req, res) => {
   const voterLocation = voter.city || voter.state ? ` (${voter.city || '?'}/${voter.state || '?'})` : '';
   await logActivity(req.user.id, 'ELEITOR_CADASTRADO', `${req.user.name} cadastrou o eleitor ${voterLabel}${voterLocation}`);
   res.status(201).json({ voter, message: 'Eleitor cadastrado com sucesso.' });
+});
+
+// Bulk create eleitores
+router.post('/bulk', async (req, res) => {
+  const { voters: inputVoters } = req.body || {};
+  if (!Array.isArray(inputVoters) || inputVoters.length === 0) {
+    return res.status(400).json({ error: 'Campo "voters" deve ser um array não vazio.' });
+  }
+  if (inputVoters.length > 500) {
+    return res.status(400).json({ error: 'Limite de 500 eleitores por request.' });
+  }
+
+  const bairroSetting = await prisma.setting.findUnique({ where: { key: 'bairroObrigatorioEleitor' } });
+  const bairroObrigatorio = bairroSetting?.value === 'true';
+
+  const existingPhones = new Set();
+  const existingTitles = new Set();
+
+  const batchPhones = new Set();
+  const batchTitles = new Set();
+
+  const results = {
+    created: [],
+    failed: [],
+  };
+
+  for (let i = 0; i < inputVoters.length; i++) {
+    const v = inputVoters[i] || {};
+    const idx = i;
+
+    const phoneDigits = v.phone ? String(v.phone).replace(/\D/g, '') : null;
+    const titleDigits = v.titleNumber ? String(v.titleNumber).replace(/\D/g, '') : null;
+
+    if (bairroObrigatorio && (!v.neighborhood || !String(v.neighborhood).trim())) {
+      results.failed.push({ index: idx, data: v, error: 'Bairro é obrigatório.' });
+      continue;
+    }
+
+    if (phoneDigits) {
+      if (batchPhones.has(phoneDigits) || existingPhones.has(phoneDigits)) {
+        results.failed.push({ index: idx, data: v, error: 'Telefone duplicado (no lote ou já cadastrado).' });
+        continue;
+      }
+      batchPhones.add(phoneDigits);
+    }
+    if (titleDigits) {
+      if (batchTitles.has(titleDigits) || existingTitles.has(titleDigits)) {
+        results.failed.push({ index: idx, data: v, error: 'Título duplicado (no lote ou já cadastrado).' });
+        continue;
+      }
+      batchTitles.add(titleDigits);
+    }
+
+    let candidateIdValue = null;
+    if (v.candidateId !== undefined && v.candidateId !== null && v.candidateId !== '') {
+      const candidate = await prisma.candidate.findUnique({ where: { id: Number(v.candidateId) } });
+      if (!candidate) {
+        results.failed.push({ index: idx, data: v, error: 'Candidato não encontrado.' });
+        continue;
+      }
+      candidateIdValue = candidate.id;
+    }
+
+    results.created.push({
+      index: idx,
+      data: {
+        name: v.name ? String(v.name).trim() : null,
+        phone: v.phone ? String(v.phone).trim() : null,
+        state: v.state ? String(v.state).trim() : null,
+        city: v.city ? String(v.city).trim() : null,
+        neighborhood: v.neighborhood ? String(v.neighborhood).trim() : null,
+        gender: v.gender ? String(v.gender).trim() : null,
+        age: v.age !== undefined && v.age !== null && v.age !== '' ? Number(v.age) : null,
+        zone: v.zone ? String(v.zone).trim() : null,
+        section: v.section ? String(v.section).trim() : null,
+        titleNumber: v.titleNumber ? String(v.titleNumber).trim() : null,
+        candidateId: candidateIdValue,
+        notes: v.notes ? String(v.notes).trim() : null,
+        createdById: req.user.id,
+      },
+    });
+  }
+
+  if (results.created.length > 0) {
+    const phoneDigitsToCheck = [...batchPhones];
+    const titleDigitsToCheck = [...batchTitles];
+
+    if (phoneDigitsToCheck.length > 0) {
+      const rows = await prisma.$queryRaw`
+        SELECT regexp_replace(coalesce(phone, ''), '\\D', '', 'g') as digits FROM voters
+        WHERE regexp_replace(coalesce(phone, ''), '\\D', '', 'g') IN (${Prisma.join(phoneDigitsToCheck)})
+      `;
+      for (const r of rows) existingPhones.add(r.digits);
+    }
+    if (titleDigitsToCheck.length > 0) {
+      const rows = await prisma.$queryRaw`
+        SELECT regexp_replace(coalesce("titleNumber", ''), '\\D', '', 'g') as digits FROM voters
+        WHERE regexp_replace(coalesce("titleNumber", ''), '\\D', '', 'g') IN (${Prisma.join(titleDigitsToCheck)})
+      `;
+      for (const r of rows) existingTitles.add(r.digits);
+    }
+
+    const toCreate = results.created.filter((c) => {
+      const p = c.data.phone ? String(c.data.phone).replace(/\D/g, '') : null;
+      const t = c.data.titleNumber ? String(c.data.titleNumber).replace(/\D/g, '') : null;
+      if (p && existingPhones.has(p)) {
+        results.failed.push({ index: c.index, data: c.data, error: 'Telefone já cadastrado.' });
+        return false;
+      }
+      if (t && existingTitles.has(t)) {
+        results.failed.push({ index: c.index, data: c.data, error: 'Título já cadastrado.' });
+        return false;
+      }
+      return true;
+    });
+
+    if (toCreate.length > 0) {
+      const createdVoters = await prisma.$transaction(
+        toCreate.map((c) => prisma.voter.create({ data: c.data }))
+      );
+      results.created = createdVoters.map((v, i) => ({ ...toCreate[i], voter: v }));
+      for (const c of results.created) {
+        await logActivity(req.user.id, 'ELEITOR_CADASTRADO', `${req.user.name} cadastrou o eleitor ${c.voter.name || 'sem nome'}`);
+      }
+    }
+    results.created = results.created.map((c) => c.voter).filter(Boolean);
+  }
+
+  res.status(201).json({
+    created: results.created,
+    failed: results.failed,
+    summary: {
+      total: inputVoters.length,
+      success: results.created.length,
+      errors: results.failed.length,
+    },
+  });
 });
 
 // Edição de eleitor — permitida dentro do escopo de cada perfil:
