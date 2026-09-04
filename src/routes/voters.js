@@ -166,12 +166,12 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'O campo Bairro é obrigatório no cadastro de eleitor.' });
   }
 
-  if (phone && (await phoneInUse(phone))) {
-    return res.status(409).json({ error: 'Número de telefone já cadastrado.' });
-  }
-
-  if (titleNumber && (await titleInUse(titleNumber))) {
-    return res.status(409).json({ error: 'Número de título de eleitor já cadastrado.' });
+  // Acumula todos os erros de duplicidade (telefone + título) em vez de parar no primeiro
+  const dupErrors = [];
+  if (phone && (await phoneInUse(phone))) dupErrors.push('Número de telefone já cadastrado.');
+  if (titleNumber && (await titleInUse(titleNumber))) dupErrors.push('Número de título de eleitor já cadastrado.');
+  if (dupErrors.length) {
+    return res.status(409).json({ error: dupErrors.join(' '), errors: dupErrors });
   }
 
   let candidate = null;
@@ -240,19 +240,19 @@ router.post('/bulk', async (req, res) => {
       continue;
     }
 
+    // Duplicidade dentro do lote: acumula telefone + título em vez de parar no primeiro
+    const batchDupErrors = [];
     if (phoneDigits) {
-      if (batchPhones.has(phoneDigits) || existingPhones.has(phoneDigits)) {
-        results.failed.push({ index: idx, data: v, error: 'Telefone duplicado (no lote ou já cadastrado).' });
-        continue;
-      }
-      batchPhones.add(phoneDigits);
+      if (batchPhones.has(phoneDigits)) batchDupErrors.push('Telefone duplicado no lote.');
+      else batchPhones.add(phoneDigits);
     }
     if (titleDigits) {
-      if (batchTitles.has(titleDigits) || existingTitles.has(titleDigits)) {
-        results.failed.push({ index: idx, data: v, error: 'Título duplicado (no lote ou já cadastrado).' });
-        continue;
-      }
-      batchTitles.add(titleDigits);
+      if (batchTitles.has(titleDigits)) batchDupErrors.push('Título duplicado no lote.');
+      else batchTitles.add(titleDigits);
+    }
+    if (batchDupErrors.length) {
+      results.failed.push({ index: idx, data: v, error: batchDupErrors.join(' '), errors: batchDupErrors });
+      continue;
     }
 
     let candidateIdValue = null;
@@ -304,15 +304,15 @@ router.post('/bulk', async (req, res) => {
       for (const r of rows) existingTitles.add(r.digits);
     }
 
+    // Duplicidade contra o banco: informa telefone E título quando ambos duplicados
     const toCreate = results.created.filter((c) => {
       const p = c.data.phone ? String(c.data.phone).replace(/\D/g, '') : null;
       const t = c.data.titleNumber ? String(c.data.titleNumber).replace(/\D/g, '') : null;
-      if (p && existingPhones.has(p)) {
-        results.failed.push({ index: c.index, data: c.data, error: 'Telefone já cadastrado.' });
-        return false;
-      }
-      if (t && existingTitles.has(t)) {
-        results.failed.push({ index: c.index, data: c.data, error: 'Título já cadastrado.' });
+      const errs = [];
+      if (p && existingPhones.has(p)) errs.push('Telefone já cadastrado.');
+      if (t && existingTitles.has(t)) errs.push('Título já cadastrado.');
+      if (errs.length) {
+        results.failed.push({ index: c.index, data: c.data, error: errs.join(' '), errors: errs });
         return false;
       }
       return true;
