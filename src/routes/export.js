@@ -145,7 +145,8 @@ router.get('/voters', async (req, res) => {
     const lines = voters
       .map((v) => {
         const phone = v.phone ? wppPhone(v.phone) : null;
-        return phone ? `${csvField(v.name)},${phone}` : null;
+        const firstName = (v.name || '').split(' ')[0];
+        return phone ? `${csvField(firstName)},${phone}` : null;
       })
       .filter(Boolean);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
