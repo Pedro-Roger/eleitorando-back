@@ -125,7 +125,7 @@ router.get('/voters', async (req, res) => {
     else v.caboGroup = 'Administração';
   });
   voters.sort(
-    (a, b) => a.caboGroup.localeCompare(b.caboGroup, 'pt-BR') || a.name.localeCompare(b.name, 'pt-BR')
+    (a, b) => a.caboGroup.localeCompare(b.caboGroup, 'pt-BR') || (a.name || '').localeCompare((b.name || ''), 'pt-BR')
   );
   const groupLabel = (g) => (g === 'Administração' || g === 'Sem responsável' ? g : `Cabo: ${g}`);
   const groupCount = new Map();
@@ -218,7 +218,8 @@ router.get('/voters', async (req, res) => {
       let x = doc.page.margins.left;
       doc.font(bold ? 'Helvetica-Bold' : 'Helvetica').fontSize(8).fillColor('#111');
       values.forEach((val, i) => {
-        doc.text(String(val), x + 2, y + 4, { width: widths[i] - 4, height: rowH, ellipsis: true, lineBreak: false });
+        const textVal = val == null ? '' : String(val);
+        doc.text(textVal, x + 2, y + 4, { width: widths[i] - 4, height: rowH, ellipsis: true, lineBreak: false });
         x += widths[i];
       });
       doc
