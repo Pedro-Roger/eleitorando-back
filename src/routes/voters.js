@@ -66,7 +66,7 @@ async function titleInUse(titleNumber, exceptId) {
 
 router.get('/', async (req, res) => {
   const ids = await scopeIds(req.user);
-  const { state, city, neighborhood, search, createdById, createdByIds, today } = req.query;
+  const { state, city, neighborhood, search, createdById, createdByIds, today, phone, zone, section, birthDate, age } = req.query;
 
   const where = {};
   if (today === '1') {
@@ -95,8 +95,13 @@ router.get('/', async (req, res) => {
   }
   if (state) where.state = state;
   if (city) where.city = city;
-  if (neighborhood) where.neighborhood = { equals: String(neighborhood).trim(), mode: 'insensitive' };
+  if (neighborhood) where.neighborhood = { contains: String(neighborhood).trim(), mode: 'insensitive' };
   if (search) where.name = { contains: String(search), mode: 'insensitive' };
+  if (phone) where.phone = { contains: String(phone), mode: 'insensitive' };
+  if (zone) where.zone = String(zone).trim();
+  if (section) where.section = String(section).trim();
+  if (birthDate) where.birthDate = String(birthDate).trim();
+  if (age) where.age = Number(age);
 
   const voters = await prisma.voter.findMany({
     where,
@@ -159,7 +164,7 @@ router.get('/lookup-city-bairro', (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const { name, phone, state, city, neighborhood, gender, age, zone, section, titleNumber, candidateId, notes } = req.body || {};
+  const { name, phone, state, city, neighborhood, gender, age, birthDate, zone, section, titleNumber, candidateId, notes } = req.body || {};
 
   const bairroSetting = await prisma.setting.findUnique({ where: { key: 'bairroObrigatorioEleitor' } });
   if (bairroSetting?.value === 'true' && (!neighborhood || !String(neighborhood).trim())) {
@@ -189,6 +194,7 @@ router.post('/', async (req, res) => {
       neighborhood: neighborhood ? String(neighborhood).trim() : null,
       gender: gender ? String(gender).trim() : null,
       age: age !== undefined && age !== null && age !== '' ? Number(age) : null,
+      birthDate: birthDate ? String(birthDate).trim() : null,
       zone: zone ? String(zone).trim() : null,
       section: section ? String(section).trim() : null,
       titleNumber: titleNumber ? String(titleNumber).trim() : null,
@@ -275,6 +281,7 @@ router.post('/bulk', async (req, res) => {
         neighborhood: v.neighborhood ? String(v.neighborhood).trim() : null,
         gender: v.gender ? String(v.gender).trim() : null,
         age: v.age !== undefined && v.age !== null && v.age !== '' ? Number(v.age) : null,
+        birthDate: v.birthDate ? String(v.birthDate).trim() : null,
         zone: v.zone ? String(v.zone).trim() : null,
         section: v.section ? String(v.section).trim() : null,
         titleNumber: v.titleNumber ? String(v.titleNumber).trim() : null,
@@ -352,7 +359,7 @@ router.patch('/:id', async (req, res) => {
     return res.status(403).json({ error: 'Você não pode editar este registro.' });
   }
 
-  const { name, phone, state, city, neighborhood, gender, age, zone, section, titleNumber, candidateId, notes } = req.body || {};
+  const { name, phone, state, city, neighborhood, gender, age, birthDate, zone, section, titleNumber, candidateId, notes } = req.body || {};
 
   const bairroSetting = await prisma.setting.findUnique({ where: { key: 'bairroObrigatorioEleitor' } });
   const effectiveNeighborhood = neighborhood !== undefined ? neighborhood : voter.neighborhood;
@@ -387,6 +394,7 @@ router.patch('/:id', async (req, res) => {
   if (neighborhood !== undefined) data.neighborhood = neighborhood ? String(neighborhood).trim() : null;
   if (gender !== undefined) data.gender = gender ? String(gender).trim() : null;
   if (age !== undefined) data.age = age !== null && age !== '' ? Number(age) : null;
+  if (birthDate !== undefined) data.birthDate = birthDate ? String(birthDate).trim() : null;
   if (zone !== undefined) data.zone = zone ? String(zone).trim() : null;
   if (section !== undefined) data.section = section ? String(section).trim() : null;
   if (notes !== undefined) data.notes = notes ? String(notes).trim() : null;

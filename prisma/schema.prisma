@@ -78,6 +78,7 @@ model Voter {
   neighborhood String?
   gender       String?
   age          Int?
+  birthDate    String?
   zone         String?
   section      String?
   notes        String?
