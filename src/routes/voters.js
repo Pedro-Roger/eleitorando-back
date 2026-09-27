@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { Prisma } = require('@prisma/client');
 const prisma = require('../db/prisma');
+const { requireRole } = require('../middleware/auth');
 const { logActivity } = require('../lib/helpers');
 const secoesCE = require('../data/ce-secoes.json');
 
@@ -427,6 +428,55 @@ router.delete('/:id', async (req, res) => {
   const deletedLocation = voter.city || voter.state ? ` (${voter.city || '?'}/${voter.state || '?'})` : '';
   await logActivity(req.user.id, 'ELEITOR_EXCLUIDO', `${req.user.name} excluiu o eleitor ${deletedLabel}${deletedLocation}`);
   res.json({ ok: true, message: 'Eleitor excluído.' });
+});
+
+// Exclusão em lote de eleitores cadastrados por um usuário específico (ex.: subcabo excluído).
+// Apenas admin pode executar. Cada exclusão é registrada em activities para auditoria completa.
+router.delete('/bulk', requireRole('ADMIN'), async (req, res) => {
+  const { createdById } = req.body || {};
+  if (!createdById || !Number.isInteger(Number(createdById))) {
+    return res.status(400).json({ error: 'Informe o ID do usuário (createdById) cujos eleitores devem ser excluídos.' });
+  }
+
+  const targetUser = await prisma.user.findUnique({ where: { id: Number(createdById) } });
+  if (!targetUser) {
+    return res.status(404).json({ error: 'Usuário informado não encontrado.' });
+  }
+
+  const voters = await prisma.voter.findMany({
+    where: { createdById: Number(createdById) },
+    select: { id: true, name: true, city: true, state: true },
+  });
+
+  if (voters.length === 0) {
+    return res.json({ ok: true, message: 'Nenhum eleitor encontrado para este usuário.', deletedCount: 0 });
+  }
+
+  const deleted = [];
+  for (const v of voters) {
+    await prisma.voter.delete({ where: { id: v.id } });
+    const location = v.city || v.state ? ` (${v.city || '?'}/${v.state || '?'})` : '';
+    await logActivity(
+      req.user.id,
+      'ELEITOR_EXCLUIDO',
+      `${req.user.name} excluiu em lote o eleitor ${v.name || 'sem nome'}${location} (cadastrado por ${targetUser.name})`
+    );
+    deleted.push(v);
+  }
+
+  await logActivity(
+    req.user.id,
+    'ELEITOR_EXCLUIDO_EM_LOTE',
+    `${req.user.name} excluiu ${deleted.length} eleitor(es) cadastrados por ${targetUser.name} (userId=${createdById})`
+  );
+
+  res.json({
+    ok: true,
+    message: `${deleted.length} eleitor(es) excluído(s).`,
+    deletedCount: deleted.length,
+    targetUser: { id: targetUser.id, name: targetUser.name, role: targetUser.role },
+    deleted,
+  });
 });
 
 module.exports = router;
