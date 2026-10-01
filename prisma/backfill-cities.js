@@ -29,6 +29,25 @@
 //       confirmação de cidade única adiciona segurança).
 //   Em ambas: preenche city (+ state CE se NULL); neighborhood fica como está.
 //
+// FASE 4 — residuais das fases 1-3, heurísticas de diagnóstico do coordenador
+// (servidor: ~152 eleitores sem city):
+//   4a) zona↔seção trocadas: se o par (zona,seção) é desconhecido (tabela
+//       oficial OU mapa de pares do TSE da fase 3) mas o par invertido
+//       (seção,zona) é conhecido, preenche city (+ state CE se NULL) com a
+//       cidade do par invertido. Pares válidos/conhecidos nunca são tocados.
+//   4b) predominância por zona: entre eleitores JÁ cadastrados com city na
+//       MESMA zona (qualquer seção), preenche com a cidade predominante SE
+//       uma única cidade detém >=80% dos conhecidos da zona (mín. 2 eleitores)
+//       OU todos concordam. Cada decisão de zona é logada (zona, cidade, n, %).
+//   4c) bairro fuzzy (linhas com neighborhood não resolvidas): match exato
+//       normalizado primeiro; senão, se o bairro normalizado é prefixo único e
+//       não-ambíguo de exatamente UMA cidade no mapa oficial bairro→cidade
+//       (todas as cidades que compartilham o prefixo idênticas), preenche;
+//       senão deixa como está. Valores brutos das linhas são impressos p/
+//       inspeção no servidor.
+//   Em toda a fase 4: zona "lixo" (número de título com 10-14 dígitos colado
+//   no campo zone, ex. 035212670752) é IGNORADA — nunca preenche nada com ela.
+//
 // Uso: node prisma/backfill-cities.js
 const { PrismaClient } = require('@prisma/client');
 
@@ -235,6 +254,31 @@ function buildTseZoneSingleCity(pairMap) {
   return { map, single, multi };
 }
 
+// ---------- FASE 4: helpers ----------
+// Zona "lixo": número de título (10-14 dígitos) colado por engano no campo
+// zone (ex. 035212670752). Nunca preencher cidade baseado num valor desses.
+function isGarbageZone(v) {
+  if (v === null || v === undefined) return false;
+  const digits = String(v).replace(/\D/g, '');
+  return digits.length >= 10 && digits.length <= 14;
+}
+
+// 4c) contagens brutas bairro normalizado -> Map(city -> count) na tabela
+// oficial (mesma construção da fase 2a, sem colapsar pra cidade mais
+// frequente — necessário pra checar ambiguidade no match por prefixo).
+function buildBairroCountsFromTre() {
+  const perBairro = new Map(); // normBairro -> Map(city -> count)
+  for (const row of secoesCE) {
+    if (!row.c || !row.b) continue;
+    const key = normBairro(row.b);
+    if (!key) continue;
+    if (!perBairro.has(key)) perBairro.set(key, new Map());
+    const counts = perBairro.get(key);
+    counts.set(row.c, (counts.get(row.c) || 0) + 1);
+  }
+  return perBairro;
+}
+
 async function main() {
   const predominant = await buildPredominantMap();
   console.log(`Tabela TRE-CE: ${zonaSecaoToLocal.size} chaves zona-seção.`);
@@ -366,6 +410,151 @@ async function main() {
   }
   console.log(`Fase 3b — preenchidos por zona TSE com cidade única: ${filledByTseZoneUnique} (de ${candTseZone.length} candidatos).`);
 
+  // ---------- FASE 4a: zona↔seção trocadas ----------
+  // Candidato: city IS NULL + zona+seção presentes. Se o par (zona,seção) é
+  // desconhecido mas o par invertido (seção,zona) é conhecido (tabela oficial
+  // TRE-CE OU mapa de pares do TSE da fase 3), preenche com a cidade do par
+  // invertido. Pares válidos (conhecidos na ordem correta) nunca são tocados —
+  // eles já teriam sido preenchidos nas fases 1/3; a checagem abaixo é defesa
+  // extra contra sobrescrita.
+  const candSwap = await prisma.voter.findMany({
+    where: { city: null, zone: { not: null }, section: { not: null } },
+    select: { id: true, zone: true, section: true, state: true },
+  });
+  let filledBySwap = 0;
+  for (const v of candSwap) {
+    const z = normNum(v.zone);
+    const s = normNum(v.section);
+    if (z === null || s === null || isGarbageZone(v.zone)) continue;
+    const fwd = `${z}-${s}`;
+    if (zonaSecaoToLocal.has(fwd) || tsePair.has(fwd)) continue; // par válido: nunca tocar
+    const revKey = `${s}-${z}`;
+    const revLocal = zonaSecaoToLocal.get(revKey);
+    const revCity = revLocal ? revLocal.city : tsePair.get(revKey) || null;
+    if (!revCity) continue;
+    await prisma.voter.update({
+      where: { id: v.id },
+      data: { city: revCity, ...(v.state === null ? { state: 'CE' } : {}) },
+    });
+    filledBySwap += 1;
+    console.log(`Fase 4a — id=${v.id} par (${z},${s}) desconhecido; invertido (${s},${z}) → ${revCity}`);
+  }
+  console.log(`Fase 4a — preenchidos por par invertido (swap): ${filledBySwap} (de ${candSwap.length} candidatos).`);
+
+  // ---------- FASE 4b: predominância por zona ----------
+  // Referência: TODOS os eleitores com city preenchida na mesma zona
+  // (qualquer seção). Preenche só se uma única cidade detém >=80% dos
+  // conhecidos da zona (mín. 2 eleitores) OU todos concordam. Zona "lixo"
+  // (título colado) é ignorada — nunca preenche.
+  const zoneCityRows = await prisma.$queryRaw`
+    SELECT zone, city, count(*)::int AS total
+    FROM voters
+    WHERE city IS NOT NULL AND zone IS NOT NULL
+    GROUP BY zone, city`;
+  const zoneCityCounts = new Map(); // zona normalizada -> { total, counts: Map(city->n) }
+  for (const r of zoneCityRows) {
+    const z = normNum(r.zone);
+    if (z === null || isGarbageZone(r.zone) || !r.city) continue;
+    if (!zoneCityCounts.has(z)) zoneCityCounts.set(z, { total: 0, counts: new Map() });
+    const entry = zoneCityCounts.get(z);
+    entry.total += r.total;
+    entry.counts.set(r.city, (entry.counts.get(r.city) || 0) + r.total);
+  }
+
+  const candZonePred = await prisma.voter.findMany({
+    where: { city: null, zone: { not: null } },
+    select: { id: true, zone: true, state: true },
+  });
+  // Decisão por zona (cacheada + logada uma vez por zona).
+  const zonePredDecision = new Map(); // zona -> { city, n, pct } | null
+  function zonePredominance(z) {
+    if (zonePredDecision.has(z)) return zonePredDecision.get(z);
+    const entry = zoneCityCounts.get(z);
+    let decision = null;
+    if (entry && entry.total > 0) {
+      const city = mostFrequentCity(entry.counts);
+      const n = entry.counts.get(city);
+      const pct = n / entry.total;
+      if ((entry.total >= 2 && pct >= 0.8) || pct === 1) decision = { city, n, pct, total: entry.total };
+    }
+    zonePredDecision.set(z, decision);
+    return decision;
+  }
+
+  let filledByZonePredominance = 0;
+  for (const v of candZonePred) {
+    const z = normNum(v.zone);
+    if (z === null || isGarbageZone(v.zone)) continue;
+    const decision = zonePredominance(z);
+    if (!decision) continue;
+    await prisma.voter.update({
+      where: { id: v.id },
+      data: { city: decision.city, ...(v.state === null ? { state: 'CE' } : {}) },
+    });
+    filledByZonePredominance += 1;
+  }
+  console.log('Fase 4b — decisões por zona (zona, cidade, n, pct dos conhecidos da zona):');
+  const loggedZones = new Set();
+  for (const v of candZonePred) {
+    const z = normNum(v.zone);
+    if (z === null || isGarbageZone(v.zone) || loggedZones.has(z)) continue;
+    loggedZones.add(z);
+    const entry = zoneCityCounts.get(z);
+    const decision = zonePredominance(z);
+    if (decision) {
+      console.log(`  zona=${z} → ${decision.city} n=${decision.n}/${decision.total} (${(decision.pct * 100).toFixed(1)}%) → PREENCHE`);
+    } else {
+      const detail = entry
+        ? `n=${entry.total}, topo=${mostFrequentCity(entry.counts)} (${((entry.counts.get(mostFrequentCity(entry.counts)) || 0) / entry.total * 100).toFixed(1)}%)`
+        : 'sem eleitores conhecidos nesta zona';
+      console.log(`  zona=${z} → sem preenchimento (${detail})`);
+    }
+  }
+  console.log(`Fase 4b — preenchidos por predominância de zona: ${filledByZonePredominance} (de ${candZonePred.length} candidatos).`);
+
+  // ---------- FASE 4c: bairro fuzzy (linhas não resolvidas com neighborhood) ----------
+  const bairroCountsTre = buildBairroCountsFromTre();
+  const candBairroFuzzy = await prisma.voter.findMany({
+    where: { city: null, neighborhood: { not: null } },
+    select: { id: true, zone: true, section: true, neighborhood: true, state: true },
+  });
+  console.log('Fase 4c — debug: linhas residuais com neighborhood (valores brutos):');
+  for (const v of candBairroFuzzy) {
+    console.log(`  id=${v.id} bairro="${v.neighborhood}" zona=${v.zone ?? '—'} seção=${v.section ?? '—'} state=${v.state ?? '—'}`);
+  }
+
+  let filledByBairroFuzzy = 0;
+  for (const v of candBairroFuzzy) {
+    const key = normBairro(v.neighborhood);
+    if (!key) continue;
+    // 1) Match exato normalizado (mesmos mapas da fase 2a).
+    let city = bairroTre.get(key) || bairroVot.get(key) || null;
+    let via = city ? 'exato' : null;
+    // 2) Fuzzy por prefixo seguro: o bairro normalizado é prefixo de chaves da
+    //    tabela oficial; preenche SOMENTE se todas as cidades dessas chaves
+    //    (prefixo único e não-ambíguo) forem idênticas a UMA cidade.
+    if (!city) {
+      const prefixCities = new Set();
+      for (const [k, counts] of bairroCountsTre) {
+        if (k !== key && k.startsWith(key)) {
+          for (const c of counts.keys()) prefixCities.add(c);
+        }
+      }
+      if (prefixCities.size === 1) {
+        city = [...prefixCities][0];
+        via = 'prefixo';
+      }
+    }
+    if (!city) continue;
+    await prisma.voter.update({
+      where: { id: v.id },
+      data: { city, ...(v.state === null ? { state: 'CE' } : {}) },
+    });
+    filledByBairroFuzzy += 1;
+    console.log(`Fase 4c — id=${v.id} bairro="${v.neighborhood}" → ${city} (${via})`);
+  }
+  console.log(`Fase 4c — preenchidos por bairro fuzzy: ${filledByBairroFuzzy} (de ${candBairroFuzzy.length} candidatos).`);
+
   // ---------- Residual: o que ficou sem city depois de tudo ----------
   const still = await prisma.voter.findMany({
     where: { city: null },
@@ -382,6 +571,7 @@ async function main() {
   }
   console.log(`Resumo fase 2: filledByBairro=${filledByBairro}, filledByZoneUnique=${filledByZoneUnique}, stillUnresolved=${still.length}`);
   console.log(`Resumo fase 3: filledByTsePair=${filledByTsePair}, filledByTseZoneUnique=${filledByTseZoneUnique}, stillUnresolved=${still.length}`);
+  console.log(`Resumo fase 4: filledBySwap=${filledBySwap}, filledByZonePredominance=${filledByZonePredominance}, filledByBairroFuzzy=${filledByBairroFuzzy}, stillUnresolved=${still.length}`);
 }
 
 main()
