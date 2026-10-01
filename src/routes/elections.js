@@ -30,7 +30,9 @@ function queryBase(req) {
     year,
     office: String(req.query.office || DEFAULT_OFFICE).toUpperCase() || DEFAULT_OFFICE,
     turn: req.query.turn !== undefined && req.query.turn !== '' ? safeInt(req.query.turn, 1, 1, 3) : 1,
-    limit: safeInt(req.query.limit, 10, 1, 50),
+    // Teto alto (999): CE tem ~184 municípios — o front pede limit=999 no
+    // comparativo para o "Por Cidade" mostrar todas as cidades.
+    limit: safeInt(req.query.limit, 10, 1, 999),
   };
 }
 
@@ -47,6 +49,32 @@ router.get('/offices', requireRole('ADMIN'), async (req, res) => {
     ...found.filter((o) => !OFFICE_ORDER.includes(o)).sort(),
   ];
   res.json({ offices: offices.length ? offices : OFFICE_ORDER });
+});
+
+// Lista statewide de candidatos da eleição passada (base TSE), agregada por
+// nome em TODAS as cidades (sem limite): alimenta o seletor do cruzamento,
+// que antes só via os nomes presentes nas top-N cidades do comparativo —
+// candidatos que votaram só em cidades pequenas ficavam de fora.
+router.get('/candidates', requireRole('ADMIN'), async (req, res) => {
+  const { year, office, turn } = queryBase(req);
+
+  const rows = await knex('election_results')
+    .where({ year, office, source: 'TSE' })
+    .where({ turn })
+    .select('candidateName', knex.raw("COALESCE(MAX(party), '') as party"), knex.raw('SUM(votes) as votes'))
+    .groupBy('candidateName')
+    .orderBy('votes', 'desc');
+
+  res.json({
+    year,
+    office,
+    turn,
+    candidates: rows.map((r) => ({
+      candidateName: r.candidateName,
+      party: r.party || '',
+      votes: Number(r.votes) || 0,
+    })),
+  });
 });
 
 // Painel: Principais Cidades — total = VOTOS da eleição passada (TSE)
