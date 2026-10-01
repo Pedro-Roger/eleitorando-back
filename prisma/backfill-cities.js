@@ -19,6 +19,16 @@
 //       cidade (typo de seção não muda a cidade). Preenche city (+ state CE
 //       se NULL); neighborhood fica como está.
 //
+// FASE 3 — residuais das fases 1/2, usando a própria base como fonte: tabela
+// election_results (resultado oficial TSE 2022, source='TSE').
+//   3a) par zona+seção → cidade: mapa DISTINCT de pares em election_results;
+//       mesmo par mapeando 2 cidades não deveria acontecer (o par é por
+//       município) — se acontecer, mantém a mais frequente e registra aviso.
+//   3b) zona → cidade única: mesma lógica da 2b, mas a partir dos pares do
+//       TSE (uma zona ausente na tabela TRE-CE pode aparecer aqui, e a
+//       confirmação de cidade única adiciona segurança).
+//   Em ambas: preenche city (+ state CE se NULL); neighborhood fica como está.
+//
 // Uso: node prisma/backfill-cities.js
 const { PrismaClient } = require('@prisma/client');
 
@@ -170,6 +180,61 @@ function buildZoneSingleCity() {
   return { map, single, multi };
 }
 
+// ---------- FASE 3: helpers ----------
+// 3a) par (zona,seção) -> cidade a partir de election_results. GROUP BY traz a
+// contagem de linhas por cidade pra desempatar caso o mesmo par aponte para
+// mais de uma cidade (mantém a mais frequente, determinístico via
+// mostFrequentCity). zone/section estão como string na tabela; normaliza com
+// normNum igual ao resto do script.
+async function buildTsePairMap() {
+  const rows = await prisma.$queryRaw`
+    SELECT "zone", "section", "city", count(*)::int AS total
+    FROM "election_results"
+    GROUP BY "zone", "section", "city"`;
+  const perPair = new Map(); // "z-s" -> Map(city -> total)
+  let conflicts = 0;
+  for (const r of rows) {
+    const z = normNum(r.zone);
+    const s = normNum(r.section);
+    if (z === null || s === null || !r.city) continue;
+    const key = `${z}-${s}`;
+    if (!perPair.has(key)) perPair.set(key, new Map());
+    const counts = perPair.get(key);
+    counts.set(r.city, (counts.get(r.city) || 0) + r.total);
+  }
+  const map = new Map();
+  for (const [key, counts] of perPair) {
+    if (counts.size > 1) {
+      conflicts += 1;
+      console.warn(`Aviso fase 3: par ${key} mapeia para ${counts.size} cidades (${[...counts.keys()].join(', ')}) — mantendo a mais frequente.`);
+    }
+    map.set(key, mostFrequentCity(counts));
+  }
+  return { map, conflicts };
+}
+
+// 3b) zona -> cidade única a partir dos pares do TSE (mesma lógica da 2b).
+function buildTseZoneSingleCity(pairMap) {
+  const perZone = new Map(); // zona -> Set(cidade)
+  for (const [key, city] of pairMap) {
+    const z = Number(key.split('-')[0]);
+    if (!perZone.has(z)) perZone.set(z, new Set());
+    perZone.get(z).add(city);
+  }
+  const map = new Map();
+  let single = 0;
+  let multi = 0;
+  for (const [z, cities] of perZone) {
+    if (cities.size === 1) {
+      map.set(z, [...cities][0]);
+      single += 1;
+    } else {
+      multi += 1;
+    }
+  }
+  return { map, single, multi };
+}
+
 async function main() {
   const predominant = await buildPredominantMap();
   console.log(`Tabela TRE-CE: ${zonaSecaoToLocal.size} chaves zona-seção.`);
@@ -256,6 +321,51 @@ async function main() {
   }
   console.log(`Fase 2b — preenchidos por zona com cidade única: ${filledByZoneUnique} (de ${candZone.length} candidatos).`);
 
+  // ---------- FASE 3a: par zona+seção → cidade (election_results) ----------
+  const { map: tsePair, conflicts } = await buildTsePairMap();
+  console.log(`Fase 3 — pares zona+seção distintos em election_results: ${tsePair.size}${conflicts > 0 ? ` (${conflicts} com mais de uma cidade — mantida a mais frequente)` : ''}.`);
+
+  const candTsePair = await prisma.voter.findMany({
+    where: { city: null, zone: { not: null }, section: { not: null } },
+    select: { id: true, zone: true, section: true, state: true },
+  });
+  let filledByTsePair = 0;
+  for (const v of candTsePair) {
+    const z = normNum(v.zone);
+    const s = normNum(v.section);
+    if (z === null || s === null) continue;
+    const city = tsePair.get(`${z}-${s}`);
+    if (!city) continue;
+    await prisma.voter.update({
+      where: { id: v.id },
+      data: { city, ...(v.state === null ? { state: 'CE' } : {}) },
+    });
+    filledByTsePair += 1;
+  }
+  console.log(`Fase 3a — preenchidos por par TSE: ${filledByTsePair} (de ${candTsePair.length} candidatos).`);
+
+  // ---------- FASE 3b: zona → cidade única (election_results) ----------
+  const tseZone = buildTseZoneSingleCity(tsePair);
+  console.log(`Fase 3b — zonas em election_results: ${tseZone.single} com cidade única, ${tseZone.multi} multi-cidade.`);
+
+  const candTseZone = await prisma.voter.findMany({
+    where: { city: null, zone: { not: null } },
+    select: { id: true, zone: true, state: true },
+  });
+  let filledByTseZoneUnique = 0;
+  for (const v of candTseZone) {
+    const z = normNum(v.zone);
+    if (z === null) continue;
+    const city = tseZone.map.get(z);
+    if (!city) continue;
+    await prisma.voter.update({
+      where: { id: v.id },
+      data: { city, ...(v.state === null ? { state: 'CE' } : {}) },
+    });
+    filledByTseZoneUnique += 1;
+  }
+  console.log(`Fase 3b — preenchidos por zona TSE com cidade única: ${filledByTseZoneUnique} (de ${candTseZone.length} candidatos).`);
+
   // ---------- Residual: o que ficou sem city depois de tudo ----------
   const still = await prisma.voter.findMany({
     where: { city: null },
@@ -271,6 +381,7 @@ async function main() {
     }
   }
   console.log(`Resumo fase 2: filledByBairro=${filledByBairro}, filledByZoneUnique=${filledByZoneUnique}, stillUnresolved=${still.length}`);
+  console.log(`Resumo fase 3: filledByTsePair=${filledByTsePair}, filledByTseZoneUnique=${filledByTseZoneUnique}, stillUnresolved=${still.length}`);
 }
 
 main()
