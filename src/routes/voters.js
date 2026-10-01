@@ -1,6 +1,7 @@
 const { Router } = require('express');
 const { Prisma } = require('@prisma/client');
 const prisma = require('../db/prisma');
+const knex = require('../db/knex');
 const { requireRole } = require('../middleware/auth');
 const { logActivity } = require('../lib/helpers');
 const secoesCE = require('../data/ce-secoes.json');
@@ -26,6 +27,30 @@ for (const row of secoesCE) {
     if (!cityBairroToSecoes.has(key)) cityBairroToSecoes.set(key, []);
     cityBairroToSecoes.get(key).push({ zone: row.z, section: row.s, local: row.l });
   }
+}
+
+// Infere cidade/bairro a partir de zona+seção (tabela TRE-CE). Se a chave não
+// existir na tabela oficial, usa a cidade mais frequente entre os eleitores já
+// cadastrados com a mesma zona+seção (dados manuais/OCR podem divergir).
+async function inferCityFromZoneSection(zone, section) {
+  if (!zone || !section) return null;
+  const z = Number(String(zone).replace(/\D/g, ''));
+  const s = Number(String(section).replace(/\D/g, ''));
+  if (!Number.isInteger(z) || !Number.isInteger(s)) return null;
+
+  const oficial = zonaSecaoToLocal.get(`${z}-${s}`);
+  if (oficial) return { ...oficial, state: 'CE', fonte: 'TRE-CE' };
+
+  const rows = await knex('voters')
+    .where({ zone: String(z), section: String(s) })
+    .whereNotNull('city')
+    .select('state', 'city', 'neighborhood')
+    .count('* as total')
+    .groupBy('state', 'city', 'neighborhood')
+    .orderBy('total', 'desc')
+    .limit(1);
+  if (!rows.length) return null;
+  return { city: rows[0].city, neighborhood: rows[0].neighborhood, state: rows[0].state, fonte: 'frequente' };
 }
 
 // Escopo de visualização por perfil:
@@ -186,13 +211,16 @@ router.post('/', async (req, res) => {
     if (!candidate) return res.status(400).json({ error: 'Candidato selecionado não encontrado.' });
   }
 
+  // D1: cidade inferida a partir de zona+seção quando não informada (API ou dados vindos do OCR)
+  const inferido = !city && zone && section ? await inferCityFromZoneSection(zone, section) : null;
+
   const voter = await prisma.voter.create({
     data: {
       name: name ? String(name).trim() : null,
       phone: phone ? String(phone).trim() : null,
-      state: state ? String(state).trim() : null,
-      city: city ? String(city).trim() : null,
-      neighborhood: neighborhood ? String(neighborhood).trim() : null,
+      state: state ? String(state).trim() : inferido?.state || null,
+      city: city ? String(city).trim() : inferido?.city || null,
+      neighborhood: neighborhood ? String(neighborhood).trim() : inferido?.neighborhood || null,
       gender: gender ? String(gender).trim() : null,
       age: age !== undefined && age !== null && age !== '' ? Number(age) : null,
       birthDate: birthDate ? String(birthDate).trim() : null,
@@ -290,6 +318,7 @@ router.post('/bulk', async (req, res) => {
         notes: v.notes ? String(v.notes).trim() : null,
         createdById: req.user.id,
       },
+      _infer: !v.city && v.zone && v.section ? { zone: v.zone, section: v.section } : null,
     });
   }
 
@@ -325,6 +354,19 @@ router.post('/bulk', async (req, res) => {
       }
       return true;
     });
+
+    // D1: inferência de cidade por zona+seção nos registros do lote sem cidade
+    for (const c of toCreate) {
+      if (c._infer) {
+        const inferido = await inferCityFromZoneSection(c._infer.zone, c._infer.section);
+        if (inferido) {
+          if (!c.data.city) c.data.city = inferido.city;
+          if (!c.data.state) c.data.state = inferido.state;
+          if (!c.data.neighborhood) c.data.neighborhood = inferido.neighborhood;
+        }
+      }
+      delete c._infer;
+    }
 
     if (toCreate.length > 0) {
       const createdVoters = await prisma.$transaction(

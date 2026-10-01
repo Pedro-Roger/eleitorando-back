@@ -13,6 +13,7 @@ const candidateRoutes = require('./routes/candidates');
 const exportRoutes = require('./routes/export');
 const miscRoutes = require('./routes/misc');
 const ocrRoutes = require('./routes/ocr');
+const electionRoutes = require('./routes/elections');
 
 const app = express();
 app.use(cors());
@@ -28,6 +29,7 @@ app.use('/dashboard', auth, blockIfMustChangePassword, dashboardRoutes);
 app.use('/candidates', auth, blockIfMustChangePassword, candidateRoutes);
 app.use('/export', auth, blockIfMustChangePassword, exportRoutes);
 app.use('/ocr', auth, blockIfMustChangePassword, ocrRoutes);
+app.use('/elections', auth, blockIfMustChangePassword, electionRoutes);
 app.use('/', auth, blockIfMustChangePassword, miscRoutes);
 
 // eslint-disable-next-line no-unused-vars

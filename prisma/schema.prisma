@@ -62,6 +62,7 @@ model Candidate {
   createdBy   User @relation(fields: [createdById], references: [id])
 
   voters Voter[]
+  electionResults ElectionResult[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -115,4 +116,31 @@ model Setting {
   value String
 
   @@map("settings")
+}
+
+// Resultado oficial de eleição passada (TSE), por zona/seção eleitoral.
+// candidateId liga ao candidato do sistema quando houver correspondência
+// (ex.: seed do adversário Kevin); importações do TSE usam candidateName/party.
+model ElectionResult {
+  id            Int        @id @default(autoincrement())
+  year          Int
+  office        String // GOVERNADOR, SENADOR, DEPUTADO FEDERAL, DEPUTADO ESTADUAL...
+  turn          Int // 1 ou 2
+  state         String
+  city          String
+  zone          String
+  section       String
+  candidateId   Int?
+  candidate     Candidate? @relation(fields: [candidateId], references: [id], onDelete: SetNull)
+  candidateName String
+  party         String?
+  votes         Int
+  source        String     @default("TSE") // TSE | FALLBACK (dados fictícios)
+
+  createdAt DateTime @default(now())
+
+  @@unique([year, office, turn, city, zone, section, candidateName])
+  @@index([year, city])
+  @@index([year, candidateId])
+  @@map("election_results")
 }
