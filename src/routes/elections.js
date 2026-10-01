@@ -179,4 +179,44 @@ router.get('/comparativo', requireRole('ADMIN'), async (req, res) => {
   });
 });
 
+// Base de eleitores cadastrados de um político, por bairro: voters apontando
+// para o Candidate agrupados por neighborhood. Parâmetro preferido é
+// candidateId (o front conhece a linha cadastrada do político); aceita também
+// candidateName (match case-insensitive exato, sem unaccent no SQL).
+router.get('/base-bairros', requireRole('ADMIN'), async (req, res) => {
+  const candidateId = safeInt(req.query.candidateId, 0, 1);
+  let resolvedId = candidateId;
+
+  if (!resolvedId) {
+    const name = String(req.query.candidateName || '').trim();
+    if (name) {
+      const row = await knex('candidates')
+        .whereNull('deletedAt')
+        .andWhereRaw('UPPER(TRIM(name)) = UPPER(?)', [name])
+        .first('id');
+      resolvedId = row ? row.id : 0;
+    }
+  }
+
+  // Político sem linha cadastrada → lista vazia (front mostra aviso).
+  if (!resolvedId) {
+    return res.json({ candidateId: null, bairros: [] });
+  }
+
+  const rows = await knex('voters')
+    .join('candidates', 'candidates.id', 'voters.candidateId')
+    .where('voters.candidateId', resolvedId)
+    .whereNotNull('voters.neighborhood')
+    .whereNot('voters.neighborhood', '')
+    .select('voters.neighborhood')
+    .count('* as total')
+    .groupBy('voters.neighborhood')
+    .orderBy('total', 'desc');
+
+  res.json({
+    candidateId: resolvedId,
+    bairros: rows.map((r) => ({ neighborhood: r.neighborhood, total: Number(r.total) || 0 })),
+  });
+});
+
 module.exports = router;
