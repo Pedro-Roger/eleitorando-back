@@ -53,6 +53,16 @@ async function inferCityFromZoneSection(zone, section) {
   return { city: rows[0].city, neighborhood: rows[0].neighborhood, state: rows[0].state, fonte: 'frequente' };
 }
 
+// Formato canônico de zona/seção = numérico sem zeros à esquerda ("014"→"14",
+// "0125"→"125"), igual ao importado do TSE. Não numérico → mantém trim original.
+// Garante que o cruzamento com ElectionResult (TSE) bata sempre.
+function normZonaSecao(value) {
+  if (value === undefined || value === null || value === '') return value;
+  const raw = String(value).trim();
+  if (!/^\d+$/.test(raw)) return raw || null;
+  return String(Number(raw));
+}
+
 // Escopo de visualização por perfil:
 // SUBCABO → apenas os próprios registros
 // CABO → os próprios + os dos seus subcabos
@@ -224,8 +234,8 @@ router.post('/', async (req, res) => {
       gender: gender ? String(gender).trim() : null,
       age: age !== undefined && age !== null && age !== '' ? Number(age) : null,
       birthDate: birthDate ? String(birthDate).trim() : null,
-      zone: zone ? String(zone).trim() : null,
-      section: section ? String(section).trim() : null,
+      zone: zone ? normZonaSecao(zone) : null,
+      section: section ? normZonaSecao(section) : null,
       titleNumber: titleNumber ? String(titleNumber).trim() : null,
       candidateId: candidate ? candidate.id : null,
       notes: notes ? String(notes).trim() : null,
@@ -311,8 +321,8 @@ router.post('/bulk', async (req, res) => {
         gender: v.gender ? String(v.gender).trim() : null,
         age: v.age !== undefined && v.age !== null && v.age !== '' ? Number(v.age) : null,
         birthDate: v.birthDate ? String(v.birthDate).trim() : null,
-        zone: v.zone ? String(v.zone).trim() : null,
-        section: v.section ? String(v.section).trim() : null,
+        zone: v.zone ? normZonaSecao(v.zone) : null,
+        section: v.section ? normZonaSecao(v.section) : null,
         titleNumber: v.titleNumber ? String(v.titleNumber).trim() : null,
         candidateId: candidateIdValue,
         notes: v.notes ? String(v.notes).trim() : null,
@@ -438,8 +448,8 @@ router.patch('/:id', async (req, res) => {
   if (gender !== undefined) data.gender = gender ? String(gender).trim() : null;
   if (age !== undefined) data.age = age !== null && age !== '' ? Number(age) : null;
   if (birthDate !== undefined) data.birthDate = birthDate ? String(birthDate).trim() : null;
-  if (zone !== undefined) data.zone = zone ? String(zone).trim() : null;
-  if (section !== undefined) data.section = section ? String(section).trim() : null;
+  if (zone !== undefined) data.zone = zone ? normZonaSecao(zone) : null;
+  if (section !== undefined) data.section = section ? normZonaSecao(section) : null;
   if (notes !== undefined) data.notes = notes ? String(notes).trim() : null;
 
   const updated = await prisma.voter.update({
