@@ -296,14 +296,20 @@ router.get('/comparativo-zona', requireRole('ADMIN'), async (req, res) => {
 
   const bySecao = new Map();
   for (const r of tseRows) {
-    const key = `${r.zone}-${r.section}`;
-    const e = bySecao.get(key) || { city: r.city || '', zona: r.zone, secao: r.section, tse: 0, coletado: 0 };
+    const c = String(r.city || '').trim().toUpperCase();
+    const z = parseInt(r.zone, 10) || 0;
+    const s = parseInt(r.section, 10) || 0;
+    const key = `${c}-${z}-${s}`;
+    const e = bySecao.get(key) || { city: c, zona: z, secao: s, tse: 0, coletado: 0 };
     e.tse += Number(r.total) || 0;
     bySecao.set(key, e);
   }
   for (const r of voterRows) {
-    const key = `${r.zone}-${r.section}`;
-    const e = bySecao.get(key) || { city: r.city || '', zona: r.zone, secao: r.section, tse: 0, coletado: 0 };
+    const c = String(r.city || '').trim().toUpperCase();
+    const z = parseInt(r.zone, 10) || 0;
+    const s = parseInt(r.section, 10) || 0;
+    const key = `${c}-${z}-${s}`;
+    const e = bySecao.get(key) || { city: c, zona: z, secao: s, tse: 0, coletado: 0 };
     e.coletado += Number(r.total) || 0;
     bySecao.set(key, e);
   }
