@@ -271,12 +271,27 @@ router.get('/comparativo-zona', requireRole('ADMIN'), async (req, res) => {
     .whereRaw('UPPER(TRIM("candidateName")) = UPPER(?)', [candidateName])
     .select('city', 'zone', 'section').sum('votes as total').groupBy('city', 'zone', 'section');
 
+    let voterQuery = knex('voters')
+    .where('candidateId', resolvedId)
+    .whereNotNull('zone')
+    .whereNotNull('section');
+
+  const caboId = Number(req.query.caboId) || 0;
+  const subcaboId = Number(req.query.subcaboId) || 0;
+
+  if (subcaboId) {
+    voterQuery = voterQuery.where('createdById', subcaboId);
+  } else if (caboId) {
+    const subs = await knex('users').where('parentId', caboId).select('id');
+    const ids = [caboId, ...subs.map(s => s.id)];
+    voterQuery = voterQuery.whereIn('createdById', ids);
+  }
+
   const voterRows = resolvedId
-    ? await knex('voters')
-        .where('candidateId', resolvedId)
-        .whereNotNull('zone')
-        .whereNotNull('section')
-        .select('city', 'zone', 'section').count('* as total').groupBy('city', 'zone', 'section')
+    ? await voterQuery
+        .select('city', 'zone', 'section')
+        .count('* as total')
+        .groupBy('city', 'zone', 'section')
     : [];
 
   const bySecao = new Map();
