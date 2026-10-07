@@ -276,7 +276,7 @@ router.get('/comparativo-zona', requireRole('ADMIN'), async (req, res) => {
         .whereNotNull('zone')
         .whereNotNull('section')
         .select('zone', 'section')
-        .sum('votes as total')
+        .count('* as total')
         .groupBy('zone', 'section')
     : [];
 
