@@ -240,9 +240,12 @@ router.get('/base-bairros', requireRole('ADMIN'), async (req, res) => {
 router.get('/comparativo-zona', requireRole('ADMIN'), async (req, res) => {
   let { year, office, turn } = queryBase(req);
   const tempName = String(req.query.candidateName || '').trim();
-  if (tempName && !req.query.office) {
-    const foundOffice = await knex('election_results').where('candidateName', tempName).first('office');
-    if (foundOffice) office = foundOffice.office;
+  if (tempName) {
+    const foundRecord = await knex('election_results').whereRaw('UPPER(TRIM("candidateName")) = UPPER(?)', [tempName]).first('office', 'year');
+    if (foundRecord) {
+      if (!req.query.office) office = foundRecord.office;
+      if (!req.query.year) year = foundRecord.year;
+    }
   }
   // Por seção a lista é grande (ex.: Governador 2026 CE = ~23k seções) —
   // teto próprio, bem acima do cap global de 999 do queryBase.
@@ -266,30 +269,26 @@ router.get('/comparativo-zona', requireRole('ADMIN'), async (req, res) => {
     .where({ year, office, source: 'TSE' })
     .where({ turn })
     .whereRaw('UPPER(TRIM("candidateName")) = UPPER(?)', [candidateName])
-    .select('zone', 'section')
-    .sum('votes as total')
-    .groupBy('zone', 'section');
+    .select('city', 'zone', 'section').sum('votes as total').groupBy('city', 'zone', 'section');
 
   const voterRows = resolvedId
     ? await knex('voters')
         .where('candidateId', resolvedId)
         .whereNotNull('zone')
         .whereNotNull('section')
-        .select('zone', 'section')
-        .count('* as total')
-        .groupBy('zone', 'section')
+        .select('city', 'zone', 'section').count('* as total').groupBy('city', 'zone', 'section')
     : [];
 
   const bySecao = new Map();
   for (const r of tseRows) {
     const key = `${r.zone}-${r.section}`;
-    const e = bySecao.get(key) || { zona: r.zone, secao: r.section, tse: 0, coletado: 0 };
+    const e = bySecao.get(key) || { city: r.city || '', zona: r.zone, secao: r.section, tse: 0, coletado: 0 };
     e.tse += Number(r.total) || 0;
     bySecao.set(key, e);
   }
   for (const r of voterRows) {
     const key = `${r.zone}-${r.section}`;
-    const e = bySecao.get(key) || { zona: r.zone, secao: r.section, tse: 0, coletado: 0 };
+    const e = bySecao.get(key) || { city: r.city || '', zona: r.zone, secao: r.section, tse: 0, coletado: 0 };
     e.coletado += Number(r.total) || 0;
     bySecao.set(key, e);
   }
