@@ -220,12 +220,13 @@ router.get('/base-bairros', requireRole('ADMIN'), async (req, res) => {
 });
 
 // Cruzamento por zona/seção para um único candidato: votos TSE da eleição
-// passada vs eleitores coletados (atual) na mesma seção. Zone/section já
-// estão em formato canônico numérico nos dois lados (ver normalize-zona-secao.js).
+// passada vs eleitores coletados (atual) na mesma seção. Zona/seção já estão
+// em formato canônico numérico nos dois lados (ver normalize-zona-secao.js).
 // candidateName é obrigatório (candidato TSE); candidateId identifica o
 // político do sistema — se ausente, tenta resolver pelo mesmo nome (como
-// /base-bairros) e, sem match, collected_voters fica 0 em todas as seções.
-router.get('/comparativo-secoes', requireRole('ADMIN'), async (req, res) => {
+// /base-bairros) e, sem match, coletado fica 0 em todas as seções.
+// Contrato do front: cada item = { zona, secao, coletado, tse }.
+router.get('/comparativo-zona', requireRole('ADMIN'), async (req, res) => {
   const { year, office, turn } = queryBase(req);
   // Por seção a lista é grande (ex.: Governador 2026 CE = ~23k seções) —
   // teto próprio, bem acima do cap global de 999 do queryBase.
@@ -266,22 +267,22 @@ router.get('/comparativo-secoes', requireRole('ADMIN'), async (req, res) => {
   const bySecao = new Map();
   for (const r of tseRows) {
     const key = `${r.zone}-${r.section}`;
-    const e = bySecao.get(key) || { zone: r.zone, section: r.section, tse_votes: 0, collected_voters: 0 };
-    e.tse_votes += Number(r.total) || 0;
+    const e = bySecao.get(key) || { zona: r.zone, secao: r.section, tse: 0, coletado: 0 };
+    e.tse += Number(r.total) || 0;
     bySecao.set(key, e);
   }
   for (const r of voterRows) {
     const key = `${r.zone}-${r.section}`;
-    const e = bySecao.get(key) || { zone: r.zone, section: r.section, tse_votes: 0, collected_voters: 0 };
-    e.collected_voters += Number(r.total) || 0;
+    const e = bySecao.get(key) || { zona: r.zone, secao: r.section, tse: 0, coletado: 0 };
+    e.coletado += Number(r.total) || 0;
     bySecao.set(key, e);
   }
 
-  const allSections = [...bySecao.values()].sort((a, b) => b.tse_votes - a.tse_votes);
+  const allSections = [...bySecao.values()].sort((a, b) => b.tse - a.tse);
   // Totais sobre a lista completa (antes do slice) — seções coletadas fora do
   // top N por votos TSE ainda contam no cruzamento.
-  const totalTse = allSections.reduce((s, e) => s + e.tse_votes, 0);
-  const totalCollected = allSections.reduce((s, e) => s + e.collected_voters, 0);
+  const totalTse = allSections.reduce((s, e) => s + e.tse, 0);
+  const totalCollected = allSections.reduce((s, e) => s + e.coletado, 0);
 
   res.json({
     year,
