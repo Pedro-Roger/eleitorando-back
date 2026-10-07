@@ -56,7 +56,18 @@ router.get('/offices', requireRole('ADMIN'), async (req, res) => {
 // que antes só via os nomes presentes nas top-N cidades do comparativo —
 // candidatos que votaram só em cidades pequenas ficavam de fora.
 router.get('/candidates', requireRole('ADMIN'), async (req, res) => {
-  const { year, office, turn } = queryBase(req);
+  let { year, office, turn } = queryBase(req);
+  const candidateName = String(req.query.candidateName || '').trim();
+  
+  if (candidateName && !req.query.office) {
+    const foundOffice = await knex('election_results')
+      .where('candidateName', candidateName)
+      .andWhere('year', year)
+      .first('office');
+    if (foundOffice) {
+      office = foundOffice.office;
+    }
+  }
 
   const rows = await knex('election_results')
     .where({ year, office, source: 'TSE' })
@@ -121,7 +132,7 @@ router.get('/comparativo', requireRole('ADMIN'), async (req, res) => {
       'candidates.name as candidateName',
       'candidates.photoUrl as photoUrl'
     )
-    .count('* as total')
+    .sum('votes as total')
     .groupByRaw('UPPER(voters.city), "candidates"."id", "candidates"."name", "candidates"."photoUrl"')
     .orderByRaw('UPPER(voters.city)');
 
@@ -209,7 +220,7 @@ router.get('/base-bairros', requireRole('ADMIN'), async (req, res) => {
     .whereNotNull('voters.neighborhood')
     .whereNot('voters.neighborhood', '')
     .select('voters.neighborhood')
-    .count('* as total')
+    .sum('votes as total')
     .groupBy('voters.neighborhood')
     .orderBy('total', 'desc');
 
@@ -227,7 +238,12 @@ router.get('/base-bairros', requireRole('ADMIN'), async (req, res) => {
 // /base-bairros) e, sem match, coletado fica 0 em todas as seções.
 // Contrato do front: cada item = { zona, secao, coletado, tse }.
 router.get('/comparativo-zona', requireRole('ADMIN'), async (req, res) => {
-  const { year, office, turn } = queryBase(req);
+  let { year, office, turn } = queryBase(req);
+  const tempName = String(req.query.candidateName || '').trim();
+  if (tempName && !req.query.office) {
+    const foundOffice = await knex('election_results').where('candidateName', tempName).first('office');
+    if (foundOffice) office = foundOffice.office;
+  }
   // Por seção a lista é grande (ex.: Governador 2026 CE = ~23k seções) —
   // teto próprio, bem acima do cap global de 999 do queryBase.
   const limit = safeInt(req.query.limit, 999, 1, 30000);
@@ -260,7 +276,7 @@ router.get('/comparativo-zona', requireRole('ADMIN'), async (req, res) => {
         .whereNotNull('zone')
         .whereNotNull('section')
         .select('zone', 'section')
-        .count('* as total')
+        .sum('votes as total')
         .groupBy('zone', 'section')
     : [];
 
