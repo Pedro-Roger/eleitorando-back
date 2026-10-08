@@ -159,6 +159,8 @@ router.get('/list', requireRole('ADMIN'), async (req, res) => {
       items: users.map((u) => ({
         id: u.id,
         title: u.name,
+        caboId: u.parentId || null,
+        caboName: u.parent?.name || null,
         subtitle:
           `${u.city}/${u.state} · ${u._count.voters} eleitor(es)` +
           (u.parent ? ` · Cabo: ${u.parent.name}` : ''),
