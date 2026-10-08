@@ -22,8 +22,16 @@ function buildElectionReport({ candidateName, comparisonRows, rows = [] }) {
   for (const row of sourceRows) {
     const team = reportTeam(row);
     const key = teamKey(team);
-    const summary = summaryMap.get(key) || { ...team, cadastrados: 0, sections: new Set() };
-    summary.cadastrados += Number(row.cadastrados) || 0;
+    const cadastrados = Number(row.cadastrados) || 0;
+    const apurado = Number(row.apurado) || 0;
+    const confirmados = Math.min(cadastrados, apurado);
+    const faltantes = Math.max(cadastrados - apurado, 0);
+    const summary = summaryMap.get(key) || {
+      ...team, cadastrados: 0, confirmados: 0, faltantes: 0, sections: new Set(),
+    };
+    summary.cadastrados += cadastrados;
+    summary.confirmados += confirmados;
+    summary.faltantes += faltantes;
     summary.sections.add(sectionKey(row));
     summaryMap.set(key, summary);
 
@@ -33,7 +41,7 @@ function buildElectionReport({ candidateName, comparisonRows, rows = [] }) {
       cadastrados: 0,
       apurado: 0,
     };
-    section.cadastrados += Number(row.cadastrados) || 0;
+    section.cadastrados += cadastrados;
     // O apurado é o mesmo por zona/seção em todas as equipes: nunca somar duplicado.
     section.apurado = Math.max(section.apurado, Number(row.apurado) || 0);
     sectionMap.set(sectionKey(row), section);
@@ -47,18 +55,23 @@ function buildElectionReport({ candidateName, comparisonRows, rows = [] }) {
       || compareNames(a.subcabo, b.subcabo)
     ));
 
-  const missing = [...sectionMap.values()]
-    .map((row) => ({ ...row, faltantes: Math.max(row.cadastrados - row.apurado, 0) }))
-    .filter((row) => row.faltantes > 0)
+  const details = [...sectionMap.values()]
+    .map((row) => ({
+      ...row,
+      confirmados: Math.min(row.cadastrados, row.apurado),
+      faltantes: Math.max(row.cadastrados - row.apurado, 0),
+    }))
     .sort((a, b) => Number(a.zona) - Number(b.zona) || Number(a.secao) - Number(b.secao));
 
   return {
     candidateName,
     summary,
-    missing,
+    details,
+    missing: details.filter((row) => row.faltantes > 0),
     totalCadastrados: summary.reduce((total, row) => total + row.cadastrados, 0),
-    totalApurado: missing.reduce((total, row) => total + row.apurado, 0),
-    totalFaltantes: missing.reduce((total, row) => total + row.faltantes, 0),
+    totalConfirmados: details.reduce((total, row) => total + row.confirmados, 0),
+    totalApurado: details.reduce((total, row) => total + row.apurado, 0),
+    totalFaltantes: details.reduce((total, row) => total + row.faltantes, 0),
   };
 }
 

@@ -444,7 +444,7 @@ function sendMissingReportPdf(res, report, meta) {
 
   const metricWidth = usable / 3;
   const metricY = doc.y;
-  [['Cadastrados', report.totalCadastrados], ['Apurado nas seções com falta', report.totalApurado], ['Total faltante', report.totalFaltantes]]
+  [['Prometidos', report.totalCadastrados], ['Confirmados TSE', report.totalConfirmados], ['Faltantes', report.totalFaltantes]]
     .forEach(([label, value], index) => {
       const x = doc.page.margins.left + index * metricWidth;
       doc.roundedRect(x, metricY, metricWidth - 8, 42, 6).fill('#F8FAFC');
@@ -455,17 +455,17 @@ function sendMissingReportPdf(res, report, meta) {
 
   doc.font('Helvetica-Bold').fontSize(12).fillColor('#0F172A').text('Resumo por cabo e subcabo');
   doc.moveDown(0.3);
-  const summaryWidths = [usable * 0.28, usable * 0.28, usable * 0.22, usable * 0.22];
-  drawPdfTableRow(doc, ['Cabo', 'Subcabo', 'Votos cadastrados', 'Seções'], summaryWidths, { header: true });
-  report.summary.forEach((row) => drawPdfTableRow(doc, [row.cabo || '—', row.subcabo || '—', row.cadastrados, row.secoes], summaryWidths));
+  const summaryWidths = [usable * 0.24, usable * 0.24, usable * 0.18, usable * 0.18, usable * 0.16];
+  drawPdfTableRow(doc, ['Cabo', 'Subcabo', 'Prometidos', 'Confirmados', 'Faltantes'], summaryWidths, { header: true });
+  report.summary.forEach((row) => drawPdfTableRow(doc, [row.cabo || '—', row.subcabo || '—', row.cadastrados, row.confirmados, row.faltantes], summaryWidths));
 
   doc.moveDown(1);
-  doc.font('Helvetica-Bold').fontSize(12).fillColor('#0F172A').text('Zonas e seções com votos faltantes');
+  doc.font('Helvetica-Bold').fontSize(12).fillColor('#0F172A').text('Detalhamento por zona e seção');
   doc.moveDown(0.3);
-  const missingWidths = [usable * 0.16, usable * 0.2, usable * 0.22, usable * 0.2, usable * 0.22];
-  drawPdfTableRow(doc, ['Zona', 'Seção', 'Cadastrados', 'Apurado TSE', 'Votos faltantes'], missingWidths, { header: true });
-  report.missing.forEach((row) => drawPdfTableRow(doc, [row.zona, row.secao, row.cadastrados, row.apurado, row.faltantes], missingWidths));
-  if (!report.missing.length) doc.font('Helvetica').fontSize(9).fillColor('#047857').text('Nenhum voto faltante encontrado.');
+  const detailWidths = [usable * 0.13, usable * 0.16, usable * 0.2, usable * 0.2, usable * 0.16, usable * 0.15];
+  drawPdfTableRow(doc, ['Zona', 'Seção', 'Cadastrados', 'Confirmados TSE', 'Faltantes', 'Status'], detailWidths, { header: true });
+  report.details.forEach((row) => drawPdfTableRow(doc, [row.zona, row.secao, row.cadastrados, row.confirmados, row.faltantes, row.faltantes ? 'Faltam votos' : 'OK'], detailWidths));
+  if (!report.details.length) doc.font('Helvetica').fontSize(9).fillColor('#047857').text('Nenhum cadastro encontrado.');
 
   doc.end();
 }

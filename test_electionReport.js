@@ -15,16 +15,17 @@ test('resume equipes e lista somente faltas positivas por zona e seção', () =>
   });
 
   assert.deepEqual(report.summary, [
-    { cabo: 'Felipe', subcabo: 'João', cadastrados: 3, secoes: 1 },
-    { cabo: 'Felipe', subcabo: 'Pedro', cadastrados: 4, secoes: 1 },
-    { cabo: 'Maria', subcabo: 'Ana', cadastrados: 8, secoes: 1 },
-    { cabo: 'Maria', subcabo: '', cadastrados: 0, secoes: 1 },
+    { cabo: 'Felipe', subcabo: 'João', cadastrados: 3, confirmados: 3, faltantes: 0, secoes: 1 },
+    { cabo: 'Felipe', subcabo: 'Pedro', cadastrados: 4, confirmados: 4, faltantes: 0, secoes: 1 },
+    { cabo: 'Maria', subcabo: 'Ana', cadastrados: 8, confirmados: 5, faltantes: 3, secoes: 1 },
+    { cabo: 'Maria', subcabo: '', cadastrados: 0, confirmados: 0, faltantes: 0, secoes: 1 },
   ]);
   assert.deepEqual(report.missing, [
-    { zona: '02', secao: '0002', cadastrados: 8, apurado: 5, faltantes: 3 },
+    { zona: '02', secao: '0002', cadastrados: 8, apurado: 5, confirmados: 5, faltantes: 3 },
   ]);
   assert.equal(report.totalCadastrados, 15);
-  assert.equal(report.totalApurado, 5);
+  assert.equal(report.totalConfirmados, 12);
+  assert.equal(report.totalApurado, 18);
   assert.equal(report.totalFaltantes, 3);
   assert.equal(report.candidateName, 'Erika Amorim');
 });
@@ -36,5 +37,5 @@ test('aceita o formato rows usado pela rota de comparação', () => {
   });
 
   assert.equal(report.totalFaltantes, 1);
-  assert.deepEqual(report.missing, [{ zona: '118', secao: '0476', cadastrados: 2, apurado: 1, faltantes: 1 }]);
+  assert.deepEqual(report.missing, [{ zona: '118', secao: '0476', cadastrados: 2, apurado: 1, confirmados: 1, faltantes: 1 }]);
 });
