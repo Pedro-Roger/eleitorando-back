@@ -29,3 +29,13 @@ test('resume equipes e lista somente faltas positivas por zona e seção', () =>
   assert.equal(report.totalFaltantes, 6);
   assert.equal(report.candidateName, 'Erika Amorim');
 });
+
+test('aceita o formato rows usado pela rota de comparação', () => {
+  const report = buildElectionReport({
+    candidateName: 'Erika Amorim',
+    rows: [{ cabo: 'Felipe', subcabo: 'Elio', zona: '118', secao: '0476', cadastrados: 0, apurado: 1 }],
+  });
+
+  assert.equal(report.totalFaltantes, 1);
+  assert.deepEqual(report.missing, [{ zona: '118', secao: '0476', cadastrados: 0, apurado: 1, faltantes: 1 }]);
+});

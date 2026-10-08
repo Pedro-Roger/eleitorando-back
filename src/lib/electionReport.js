@@ -14,11 +14,12 @@ function compareNames(a, b) {
   return String(a || '').localeCompare(String(b || ''), 'pt-BR');
 }
 
-function buildElectionReport({ candidateName, comparisonRows = [] }) {
+function buildElectionReport({ candidateName, comparisonRows, rows = [] }) {
+  const sourceRows = comparisonRows || rows;
   const summaryMap = new Map();
   const sectionMap = new Map();
 
-  for (const row of comparisonRows) {
+  for (const row of sourceRows) {
     const team = reportTeam(row);
     const key = teamKey(team);
     const summary = summaryMap.get(key) || { ...team, cadastrados: 0, sections: new Set() };
