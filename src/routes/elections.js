@@ -286,12 +286,10 @@ router.get('/comparativo-zona', requireRole('ADMIN'), async (req, res) => {
     voterQuery = voterQuery.whereIn('createdById', ids);
   }
 
-  const voterRows = resolvedId
-    ? await voterQuery
-        .select('city', 'zone', 'section')
-        .count('* as total')
-        .groupBy('city', 'zone', 'section')
-    : [];
+  const voterRows = await voterQuery
+    .select('city', 'zone', 'section')
+    .count('* as total')
+    .groupBy('city', 'zone', 'section');
 
   const bySecao = new Map();
   for (const r of tseRows) {
