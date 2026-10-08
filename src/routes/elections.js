@@ -4,6 +4,7 @@
 const { Router } = require('express');
 const knex = require('../db/knex');
 const { requireRole } = require('../middleware/auth');
+const { buildComparisonRows } = require('../lib/electionComparison');
 
 const router = Router();
 
@@ -327,6 +328,71 @@ router.get('/comparativo-zona', requireRole('ADMIN'), async (req, res) => {
     totalCollectedVoters: totalCollected,
     sections: allSections.slice(0, limit), // [] se candidato sem votos na base — front trata como "sem dados"
   });
+});
+
+// Comparativo detalhado: cada linha representa cabo/subcabo + zona/seção,
+// cruzando os cadastros da equipe com os votos TSE da candidata selecionada.
+router.get('/comparativo-eleitores', requireRole('ADMIN'), async (req, res) => {
+  let { year, office, turn } = queryBase(req);
+  const candidateName = String(req.query.candidateName || '').trim();
+  if (!candidateName) {
+    return res.status(400).json({ error: 'Parâmetro candidateName é obrigatório.' });
+  }
+
+  if (!req.query.office || !req.query.year) {
+    const foundRecord = await knex('election_results')
+      .whereRaw('UPPER(TRIM("candidateName")) = UPPER(?)', [candidateName])
+      .orderBy('year', 'desc')
+      .first('office', 'year');
+    if (foundRecord) {
+      if (!req.query.office) office = foundRecord.office;
+      if (!req.query.year) year = foundRecord.year;
+    }
+  }
+
+  let voterQuery = knex('voters as v')
+    .leftJoin('users as creator', 'v.createdById', 'creator.id')
+    .leftJoin('users as cabo', 'creator.parentId', 'cabo.id')
+    .whereNotNull('v.zone')
+    .whereNotNull('v.section');
+
+  const caboId = Number(req.query.caboId) || 0;
+  const subcaboId = Number(req.query.subcaboId) || 0;
+  if (subcaboId) {
+    voterQuery = voterQuery.where('v.createdById', subcaboId);
+  } else if (caboId) {
+    const subs = await knex('users').where('parentId', caboId).select('id');
+    voterQuery = voterQuery.whereIn('v.createdById', [caboId, ...subs.map((s) => s.id)]);
+  }
+
+  const voters = await voterQuery.select(
+    'v.city',
+    'v.zone',
+    'v.section',
+    'creator.name as creatorName',
+    'creator.role as creatorRole',
+    'cabo.name as caboName'
+  );
+
+  const tseRows = await knex('election_results')
+    .where({ year, office, turn, source: 'TSE' })
+    .whereRaw('UPPER(TRIM("candidateName")) = UPPER(?)', [candidateName])
+    .select('candidateName', 'city', 'zone', 'section')
+    .sum('votes as total')
+    .groupBy('candidateName', 'city', 'zone', 'section');
+
+  let rows = buildComparisonRows({ voters, tseRows, candidateName });
+
+  // Quando o usuário restringe uma equipe, linhas apenas do TSE não pertencem
+  // ao recorte escolhido e não devem aparecer como se fossem da equipe.
+  if (caboId || subcaboId) rows = rows.filter((row) => row.cadastrados > 0);
+
+  const zoneFilter = String(req.query.zone || '').trim();
+  const sectionFilter = String(req.query.section || '').trim();
+  if (zoneFilter) rows = rows.filter((row) => row.zona.includes(zoneFilter));
+  if (sectionFilter) rows = rows.filter((row) => row.secao.includes(sectionFilter));
+
+  res.json({ candidateName, year, office, turn, rows });
 });
 
 
