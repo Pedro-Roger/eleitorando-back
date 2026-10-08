@@ -332,4 +332,64 @@ router.get('/comparativo-zona', requireRole('ADMIN'), async (req, res) => {
   });
 });
 
+
+router.get('/relatorio-eleitores', requireRole('ADMIN'), async (req, res) => {
+  const voters = await knex('voters')
+    .leftJoin('users as creator', 'voters.createdById', 'creator.id')
+    .leftJoin('users as cabo', 'creator.parentId', 'cabo.id')
+    .select(
+      'voters.id',
+      'voters.name',
+      'voters.city',
+      'voters.zone',
+      'voters.section',
+      'creator.name as creatorName',
+      'creator.role as creatorRole',
+      'cabo.name as caboName'
+    )
+    .whereNotNull('voters.zone')
+    .whereNotNull('voters.section');
+
+  const { year = 2026, turn = 1 } = req.query;
+
+  // Obter votos TSE por zona/secao
+  const tseRows = await knex('election_results')
+    .where({ year, turn, source: 'TSE' })
+    .whereIn('candidateName', ['KEIVILANNY DIAS MOURA GONÇALVES', 'ERICA AMORIM'])
+    .select('candidateName', 'city', 'zone', 'section')
+    .sum('votes as total')
+    .groupBy('candidateName', 'city', 'zone', 'section');
+
+  const tseMap = new Map();
+  for (const r of tseRows) {
+    const key = `${r.zone}-${r.section}`;
+    if (!tseMap.has(key)) tseMap.set(key, { keivia: 0, erika: 0 });
+    const entry = tseMap.get(key);
+    if (r.candidateName === 'KEIVILANNY DIAS MOURA GONÇALVES') entry.keivia = Number(r.total) || 0;
+    if (r.candidateName === 'ERICA AMORIM') entry.erika = Number(r.total) || 0;
+  }
+
+  // Contar cadastros na mesma secao
+  const countMap = new Map();
+  for (const v of voters) {
+    const key = `${v.zone}-${v.section}`;
+    countMap.set(key, (countMap.get(key) || 0) + 1);
+  }
+
+  const result = voters.map(v => {
+    const key = `${v.zone}-${v.section}`;
+    const tse = tseMap.get(key) || { keivia: 0, erika: 0 };
+    return {
+      ...v,
+      subcaboName: v.creatorRole === 'SUBCABO' ? v.creatorName : null,
+      caboFinalName: v.creatorRole === 'CABO' ? v.creatorName : v.caboName,
+      cadastrosSecao: countMap.get(key) || 0,
+      tseKeivia: tse.keivia,
+      tseErika: tse.erika
+    };
+  });
+
+  res.json({ items: result });
+});
+
 module.exports = router;
