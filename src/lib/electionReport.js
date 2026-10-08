@@ -17,7 +17,8 @@ function compareNames(a, b) {
 function buildElectionReport({ candidateName, comparisonRows, rows = [] }) {
   const sourceRows = comparisonRows || rows;
   const summaryMap = new Map();
-  const sectionMap = new Map();
+  const detailMap = new Map();
+  const totalSectionMap = new Map();
 
   for (const row of sourceRows) {
     const team = reportTeam(row);
@@ -35,16 +36,25 @@ function buildElectionReport({ candidateName, comparisonRows, rows = [] }) {
     summary.sections.add(sectionKey(row));
     summaryMap.set(key, summary);
 
-    const section = sectionMap.get(sectionKey(row)) || {
+    const detailKey = `${key}\u0000${sectionKey(row)}`;
+    const detail = detailMap.get(detailKey) || {
+      ...team,
       zona: row.zona,
       secao: row.secao,
       cadastrados: 0,
       apurado: 0,
     };
-    section.cadastrados += cadastrados;
+    detail.cadastrados += cadastrados;
     // O apurado é o mesmo por zona/seção em todas as equipes: nunca somar duplicado.
-    section.apurado = Math.max(section.apurado, Number(row.apurado) || 0);
-    sectionMap.set(sectionKey(row), section);
+    detail.apurado = Math.max(detail.apurado, apurado);
+    detailMap.set(detailKey, detail);
+
+    const totalSection = totalSectionMap.get(sectionKey(row)) || {
+      zona: row.zona, secao: row.secao, cadastrados: 0, apurado: 0,
+    };
+    totalSection.cadastrados += cadastrados;
+    totalSection.apurado = Math.max(totalSection.apurado, apurado);
+    totalSectionMap.set(sectionKey(row), totalSection);
   }
 
   const summary = [...summaryMap.values()]
@@ -55,7 +65,7 @@ function buildElectionReport({ candidateName, comparisonRows, rows = [] }) {
       || compareNames(a.subcabo, b.subcabo)
     ));
 
-  const details = [...sectionMap.values()]
+  const details = [...detailMap.values()]
     .map((row) => ({
       ...row,
       confirmados: Math.min(row.cadastrados, row.apurado),
@@ -69,9 +79,9 @@ function buildElectionReport({ candidateName, comparisonRows, rows = [] }) {
     details,
     missing: details.filter((row) => row.faltantes > 0),
     totalCadastrados: summary.reduce((total, row) => total + row.cadastrados, 0),
-    totalConfirmados: details.reduce((total, row) => total + row.confirmados, 0),
-    totalApurado: details.reduce((total, row) => total + row.apurado, 0),
-    totalFaltantes: details.reduce((total, row) => total + row.faltantes, 0),
+    totalConfirmados: [...totalSectionMap.values()].reduce((total, row) => total + Math.min(row.cadastrados, row.apurado), 0),
+    totalApurado: [...totalSectionMap.values()].reduce((total, row) => total + row.apurado, 0),
+    totalFaltantes: [...totalSectionMap.values()].reduce((total, row) => total + Math.max(row.cadastrados - row.apurado, 0), 0),
   };
 }
 

@@ -21,8 +21,11 @@ test('resume equipes e lista somente faltas positivas por zona e seção', () =>
     { cabo: 'Maria', subcabo: '', cadastrados: 0, confirmados: 0, faltantes: 0, secoes: 1 },
   ]);
   assert.deepEqual(report.missing, [
-    { zona: '02', secao: '0002', cadastrados: 8, apurado: 5, confirmados: 5, faltantes: 3 },
+    { cabo: 'Maria', subcabo: 'Ana', zona: '02', secao: '0002', cadastrados: 8, apurado: 5, confirmados: 5, faltantes: 3 },
   ]);
+  assert.deepEqual(report.details.find((row) => row.zona === '02' && row.secao === '0002'), {
+    cabo: 'Maria', subcabo: 'Ana', zona: '02', secao: '0002', cadastrados: 8, apurado: 5, confirmados: 5, faltantes: 3,
+  });
   assert.equal(report.totalCadastrados, 15);
   assert.equal(report.totalConfirmados, 12);
   assert.equal(report.totalApurado, 18);
@@ -37,5 +40,5 @@ test('aceita o formato rows usado pela rota de comparação', () => {
   });
 
   assert.equal(report.totalFaltantes, 1);
-  assert.deepEqual(report.missing, [{ zona: '118', secao: '0476', cadastrados: 2, apurado: 1, confirmados: 1, faltantes: 1 }]);
+  assert.deepEqual(report.missing, [{ cabo: 'Felipe', subcabo: 'Elio', zona: '118', secao: '0476', cadastrados: 2, apurado: 1, confirmados: 1, faltantes: 1 }]);
 });
