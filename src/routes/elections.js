@@ -2,9 +2,11 @@
 // cruzamento eleição passada (TSE, ElectionResult) vs atual (intenção dos
 // eleitores cadastrados, Voter.candidateId). Agregações via Knex.
 const { Router } = require('express');
+const PDFDocument = require('pdfkit');
 const knex = require('../db/knex');
 const { requireRole } = require('../middleware/auth');
 const { buildComparisonRows } = require('../lib/electionComparison');
+const { buildElectionReport } = require('../lib/electionReport');
 
 const router = Router();
 
@@ -330,13 +332,13 @@ router.get('/comparativo-zona', requireRole('ADMIN'), async (req, res) => {
   });
 });
 
-// Comparativo detalhado: cada linha representa cabo/subcabo + zona/seção,
-// cruzando os cadastros da equipe com os votos TSE da candidata selecionada.
-router.get('/comparativo-eleitores', requireRole('ADMIN'), async (req, res) => {
+async function loadDetailedComparison(req) {
   let { year, office, turn } = queryBase(req);
   const candidateName = String(req.query.candidateName || '').trim();
   if (!candidateName) {
-    return res.status(400).json({ error: 'Parâmetro candidateName é obrigatório.' });
+    const error = new Error('Parâmetro candidateName é obrigatório.');
+    error.status = 400;
+    throw error;
   }
 
   if (!req.query.office || !req.query.year) {
@@ -392,7 +394,90 @@ router.get('/comparativo-eleitores', requireRole('ADMIN'), async (req, res) => {
   if (zoneFilter) rows = rows.filter((row) => row.zona.includes(zoneFilter));
   if (sectionFilter) rows = rows.filter((row) => row.secao.includes(sectionFilter));
 
-  res.json({ candidateName, year, office, turn, rows });
+  return { candidateName, year, office, turn, rows };
+}
+
+// Comparativo detalhado: cada linha representa cabo/subcabo + zona/seção,
+// cruzando os cadastros da equipe com os votos TSE da candidata selecionada.
+router.get('/comparativo-eleitores', requireRole('ADMIN'), async (req, res) => {
+  const comparison = await loadDetailedComparison(req);
+  res.json(comparison);
+});
+
+function drawPdfTableRow(doc, values, widths, { header = false } = {}) {
+  const rowHeight = 20;
+  const bottom = doc.page.height - doc.page.margins.bottom;
+  if (doc.y + rowHeight > bottom) doc.addPage();
+  const y = doc.y;
+  let x = doc.page.margins.left;
+  doc.font(header ? 'Helvetica-Bold' : 'Helvetica').fontSize(8).fillColor('#111827');
+  values.forEach((value, index) => {
+    if (header) doc.rect(x, y, widths[index], rowHeight).fill('#E8EEF8');
+    doc.fillColor('#111827').text(String(value ?? ''), x + 4, y + 6, {
+      width: widths[index] - 8,
+      height: rowHeight,
+      ellipsis: true,
+      lineBreak: false,
+    });
+    x += widths[index];
+  });
+  doc.moveTo(doc.page.margins.left, y + rowHeight)
+    .lineTo(doc.page.width - doc.page.margins.right, y + rowHeight)
+    .strokeColor('#CBD5E1')
+    .lineWidth(0.5)
+    .stroke();
+  doc.y = y + rowHeight;
+}
+
+function sendMissingReportPdf(res, report, meta) {
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36 });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'attachment; filename="relatorio-votos-faltantes.pdf"');
+  doc.pipe(res);
+
+  const usable = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  doc.font('Helvetica-Bold').fontSize(18).fillColor('#0F172A').text('Relatório de votos faltantes');
+  doc.font('Helvetica').fontSize(10).fillColor('#475569')
+    .text(`Candidata: ${report.candidateName} · ${meta.office} · ${meta.turn}º turno`)
+    .text(`Gerado em ${new Date().toLocaleDateString('pt-BR')}`);
+  doc.moveDown(0.8);
+
+  const metricWidth = usable / 3;
+  const metricY = doc.y;
+  [['Cadastrados', report.totalCadastrados], ['Apurado nas seções com falta', report.totalApurado], ['Total faltante', report.totalFaltantes]]
+    .forEach(([label, value], index) => {
+      const x = doc.page.margins.left + index * metricWidth;
+      doc.roundedRect(x, metricY, metricWidth - 8, 42, 6).fill('#F8FAFC');
+      doc.font('Helvetica-Bold').fontSize(16).fillColor('#0F172A').text(String(value), x + 10, metricY + 8);
+      doc.font('Helvetica').fontSize(8).fillColor('#64748B').text(label, x + 10, metricY + 27);
+    });
+  doc.y = metricY + 56;
+
+  doc.font('Helvetica-Bold').fontSize(12).fillColor('#0F172A').text('Resumo por cabo e subcabo');
+  doc.moveDown(0.3);
+  const summaryWidths = [usable * 0.28, usable * 0.28, usable * 0.22, usable * 0.22];
+  drawPdfTableRow(doc, ['Cabo', 'Subcabo', 'Votos cadastrados', 'Seções'], summaryWidths, { header: true });
+  report.summary.forEach((row) => drawPdfTableRow(doc, [row.cabo || '—', row.subcabo || '—', row.cadastrados, row.secoes], summaryWidths));
+
+  doc.moveDown(1);
+  doc.font('Helvetica-Bold').fontSize(12).fillColor('#0F172A').text('Zonas e seções com votos faltantes');
+  doc.moveDown(0.3);
+  const missingWidths = [usable * 0.16, usable * 0.2, usable * 0.22, usable * 0.2, usable * 0.22];
+  drawPdfTableRow(doc, ['Zona', 'Seção', 'Cadastrados', 'Apurado TSE', 'Votos faltantes'], missingWidths, { header: true });
+  report.missing.forEach((row) => drawPdfTableRow(doc, [row.zona, row.secao, row.cadastrados, row.apurado, row.faltantes], missingWidths));
+  if (!report.missing.length) doc.font('Helvetica').fontSize(9).fillColor('#047857').text('Nenhum voto faltante encontrado.');
+
+  doc.end();
+}
+
+router.get('/relatorio-faltantes', requireRole('ADMIN'), async (req, res) => {
+  const comparison = await loadDetailedComparison(req);
+  res.json(buildElectionReport(comparison));
+});
+
+router.get('/relatorio-faltantes/pdf', requireRole('ADMIN'), async (req, res) => {
+  const comparison = await loadDetailedComparison(req);
+  sendMissingReportPdf(res, buildElectionReport(comparison), comparison);
 });
 
 
