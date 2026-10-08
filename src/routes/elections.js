@@ -7,6 +7,7 @@ const knex = require('../db/knex');
 const { requireRole } = require('../middleware/auth');
 const { buildComparisonRows } = require('../lib/electionComparison');
 const { buildElectionReport } = require('../lib/electionReport');
+const { buildMissingVoterRows } = require('../lib/missingVoterReport');
 
 const router = Router();
 
@@ -397,6 +398,37 @@ async function loadDetailedComparison(req) {
   return { candidateName, year, office, turn, rows };
 }
 
+async function loadMissingVoterReport(req) {
+  const comparison = await loadDetailedComparison(req);
+  const missingSections = comparison.rows.filter((row) => row.cadastrados > row.apurado);
+  if (!missingSections.length) return { comparison, voters: [] };
+
+  let voterQuery = knex('voters as v')
+    .leftJoin('users as creator', 'v.createdById', 'creator.id')
+    .leftJoin('users as cabo', 'creator.parentId', 'cabo.id')
+    .whereNotNull('v.zone')
+    .whereNotNull('v.section');
+
+  const caboId = Number(req.query.caboId) || 0;
+  const subcaboId = Number(req.query.subcaboId) || 0;
+  if (subcaboId) {
+    voterQuery = voterQuery.where('v.createdById', subcaboId);
+  } else if (caboId) {
+    const subs = await knex('users').where('parentId', caboId).select('id');
+    voterQuery = voterQuery.whereIn('v.createdById', [caboId, ...subs.map((s) => s.id)]);
+  }
+
+  const voters = await voterQuery.select(
+    'v.name', 'v.phone', 'v.zone', 'v.section',
+    'creator.name as creatorName', 'creator.role as creatorRole', 'cabo.name as caboName'
+  );
+
+  return {
+    comparison,
+    voters: buildMissingVoterRows({ voters, missingSections }),
+  };
+}
+
 // Comparativo detalhado: cada linha representa cabo/subcabo + zona/seção,
 // cruzando os cadastros da equipe com os votos TSE da candidata selecionada.
 router.get('/comparativo-eleitores', requireRole('ADMIN'), async (req, res) => {
@@ -470,9 +502,39 @@ function sendMissingReportPdf(res, report, meta) {
   doc.end();
 }
 
+function sendMissingVotersPdf(res, report, voters) {
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36 });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'attachment; filename="relatorio-eleitores-secoes-faltantes.pdf"');
+  doc.pipe(res);
+
+  const usable = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  doc.font('Helvetica-Bold').fontSize(18).fillColor('#0F172A').text('Eleitores nas seções abaixo da meta');
+  doc.font('Helvetica').fontSize(10).fillColor('#475569')
+    .text(`Candidata: ${report.candidateName} · ${voters.length} eleitor(es)`)
+    .text(`Gerado em ${new Date().toLocaleDateString('pt-BR')}`);
+  doc.moveDown(0.8);
+
+  const widths = [usable * 0.22, usable * 0.16, usable * 0.16, usable * 0.16, usable * 0.12, usable * 0.18];
+  drawPdfTableRow(doc, ['Nome', 'Telefone', 'Cabo', 'Subcabo', 'Zona', 'Seção'], widths, { header: true });
+  voters.forEach((voter) => drawPdfTableRow(doc, [voter.name, voter.phone, voter.cabo || '—', voter.subcabo || '—', voter.zona, voter.secao], widths));
+  if (!voters.length) doc.font('Helvetica').fontSize(9).fillColor('#047857').text('Nenhum eleitor encontrado nas seções abaixo da meta.');
+  doc.end();
+}
+
 router.get('/relatorio-faltantes', requireRole('ADMIN'), async (req, res) => {
   const comparison = await loadDetailedComparison(req);
   res.json(buildElectionReport(comparison));
+});
+
+router.get('/relatorio-faltantes/eleitores', requireRole('ADMIN'), async (req, res) => {
+  const { comparison, voters } = await loadMissingVoterReport(req);
+  res.json({ candidateName: comparison.candidateName, voters, total: voters.length });
+});
+
+router.get('/relatorio-faltantes/eleitores/pdf', requireRole('ADMIN'), async (req, res) => {
+  const { comparison, voters } = await loadMissingVoterReport(req);
+  sendMissingVotersPdf(res, comparison, voters);
 });
 
 router.get('/relatorio-faltantes/pdf', requireRole('ADMIN'), async (req, res) => {
