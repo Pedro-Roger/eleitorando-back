@@ -33,9 +33,8 @@ function teamForVoter(voter) {
 }
 
 function comparisonStatus(diferenca) {
-  if (diferenca === 0) return 'OK';
   if (diferenca > 0) return `Faltam ${diferenca} votos`;
-  return `Apurado excede em ${Math.abs(diferenca)}`;
+  return 'OK';
 }
 
 function buildComparisonRows({ voters = [], tseRows = [], candidateName = '' }) {
