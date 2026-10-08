@@ -272,7 +272,6 @@ router.get('/comparativo-zona', requireRole('ADMIN'), async (req, res) => {
     .select('city', 'zone', 'section').sum('votes as total').groupBy('city', 'zone', 'section');
 
     let voterQuery = knex('voters')
-    .where('candidateId', resolvedId)
     .whereNotNull('zone')
     .whereNotNull('section');
 
