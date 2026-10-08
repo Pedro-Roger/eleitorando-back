@@ -48,7 +48,7 @@ function buildElectionReport({ candidateName, comparisonRows, rows = [] }) {
     ));
 
   const missing = [...sectionMap.values()]
-    .map((row) => ({ ...row, faltantes: Math.max(row.apurado - row.cadastrados, 0) }))
+    .map((row) => ({ ...row, faltantes: Math.max(row.cadastrados - row.apurado, 0) }))
     .filter((row) => row.faltantes > 0)
     .sort((a, b) => Number(a.zona) - Number(b.zona) || Number(a.secao) - Number(b.secao));
 

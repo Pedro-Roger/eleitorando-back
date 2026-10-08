@@ -21,21 +21,20 @@ test('resume equipes e lista somente faltas positivas por zona e seção', () =>
     { cabo: 'Maria', subcabo: '', cadastrados: 0, secoes: 1 },
   ]);
   assert.deepEqual(report.missing, [
-    { zona: '01', secao: '0001', cadastrados: 7, apurado: 10, faltantes: 3 },
-    { zona: '02', secao: '0003', cadastrados: 0, apurado: 3, faltantes: 3 },
+    { zona: '02', secao: '0002', cadastrados: 8, apurado: 5, faltantes: 3 },
   ]);
   assert.equal(report.totalCadastrados, 15);
-  assert.equal(report.totalApurado, 13);
-  assert.equal(report.totalFaltantes, 6);
+  assert.equal(report.totalApurado, 5);
+  assert.equal(report.totalFaltantes, 3);
   assert.equal(report.candidateName, 'Erika Amorim');
 });
 
 test('aceita o formato rows usado pela rota de comparação', () => {
   const report = buildElectionReport({
     candidateName: 'Erika Amorim',
-    rows: [{ cabo: 'Felipe', subcabo: 'Elio', zona: '118', secao: '0476', cadastrados: 0, apurado: 1 }],
+    rows: [{ cabo: 'Felipe', subcabo: 'Elio', zona: '118', secao: '0476', cadastrados: 2, apurado: 1 }],
   });
 
   assert.equal(report.totalFaltantes, 1);
-  assert.deepEqual(report.missing, [{ zona: '118', secao: '0476', cadastrados: 0, apurado: 1, faltantes: 1 }]);
+  assert.deepEqual(report.missing, [{ zona: '118', secao: '0476', cadastrados: 2, apurado: 1, faltantes: 1 }]);
 });
