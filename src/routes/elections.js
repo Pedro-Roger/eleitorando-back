@@ -455,16 +455,16 @@ function sendMissingReportPdf(res, report, meta) {
 
   doc.font('Helvetica-Bold').fontSize(12).fillColor('#0F172A').text('Resumo por cabo e subcabo');
   doc.moveDown(0.3);
-  const summaryWidths = [usable * 0.24, usable * 0.24, usable * 0.18, usable * 0.18, usable * 0.16];
-  drawPdfTableRow(doc, ['Cabo', 'Subcabo', 'Prometidos', 'Confirmados', 'Faltantes'], summaryWidths, { header: true });
-  report.summary.forEach((row) => drawPdfTableRow(doc, [row.cabo || '—', row.subcabo || '—', row.cadastrados, row.confirmados, row.faltantes], summaryWidths));
+  const summaryWidths = [usable * 0.21, usable * 0.21, usable * 0.16, usable * 0.16, usable * 0.14, usable * 0.12];
+  drawPdfTableRow(doc, ['Cabo', 'Subcabo', 'Prometidos', 'Confirmados', 'Faltantes', '% faltantes'], summaryWidths, { header: true });
+  report.summary.forEach((row) => drawPdfTableRow(doc, [row.cabo || '—', row.subcabo || '—', row.cadastrados, row.confirmados, row.faltantes, `${row.percentualFaltantes}%`], summaryWidths));
 
   doc.moveDown(1);
   doc.font('Helvetica-Bold').fontSize(12).fillColor('#0F172A').text('Detalhamento por zona e seção');
   doc.moveDown(0.3);
-  const detailWidths = [usable * 0.16, usable * 0.16, usable * 0.11, usable * 0.14, usable * 0.14, usable * 0.12, usable * 0.09, usable * 0.08];
-  drawPdfTableRow(doc, ['Cabo', 'Subcabo', 'Zona', 'Seção', 'Prometidos', 'Confirmados', 'Faltantes', 'Status'], detailWidths, { header: true });
-  report.details.forEach((row) => drawPdfTableRow(doc, [row.cabo || '—', row.subcabo || '—', row.zona, row.secao, row.cadastrados, row.confirmados, row.faltantes, row.faltantes ? 'Faltam votos' : 'OK'], detailWidths));
+  const detailWidths = [usable * 0.14, usable * 0.14, usable * 0.1, usable * 0.12, usable * 0.13, usable * 0.13, usable * 0.1, usable * 0.08, usable * 0.06];
+  drawPdfTableRow(doc, ['Cabo', 'Subcabo', 'Zona', 'Seção', 'Prometidos', 'Confirmados', 'Faltantes', '% faltantes', 'Status'], detailWidths, { header: true });
+  report.details.forEach((row) => drawPdfTableRow(doc, [row.cabo || '—', row.subcabo || '—', row.zona, row.secao, row.cadastrados, row.confirmados, row.faltantes, `${row.percentualFaltantes}%`, row.faltantes ? 'Faltam votos' : 'OK'], detailWidths));
   if (!report.details.length) doc.font('Helvetica').fontSize(9).fillColor('#047857').text('Nenhum cadastro encontrado.');
 
   doc.end();

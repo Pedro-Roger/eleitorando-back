@@ -58,7 +58,11 @@ function buildElectionReport({ candidateName, comparisonRows, rows = [] }) {
   }
 
   const summary = [...summaryMap.values()]
-    .map(({ sections, ...row }) => ({ ...row, secoes: sections.size }))
+    .map(({ sections, ...row }) => ({
+      ...row,
+      secoes: sections.size,
+      percentualFaltantes: row.cadastrados ? Math.round((row.faltantes / row.cadastrados) * 100) : 0,
+    }))
     .sort((a, b) => (
       compareNames(a.cabo, b.cabo)
       || (a.subcabo ? 0 : 1) - (b.subcabo ? 0 : 1)
@@ -70,6 +74,10 @@ function buildElectionReport({ candidateName, comparisonRows, rows = [] }) {
       ...row,
       confirmados: Math.min(row.cadastrados, row.apurado),
       faltantes: Math.max(row.cadastrados - row.apurado, 0),
+    }))
+    .map((row) => ({
+      ...row,
+      percentualFaltantes: row.cadastrados ? Math.round((row.faltantes / row.cadastrados) * 100) : 0,
     }))
     .sort((a, b) => Number(a.zona) - Number(b.zona) || Number(a.secao) - Number(b.secao));
 
