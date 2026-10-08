@@ -1,6 +1,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { buildMissingVoterRows } = require('./src/lib/missingVoterReport');
+const { buildMissingVoterRows, findMissingSections } = require('./src/lib/missingVoterReport');
+
+test('considera a falta pelo total da seção, mesmo com vários subcabos', () => {
+  assert.deepEqual(findMissingSections([
+    { zona: '01', secao: '0006', cadastrados: 3, apurado: 5 },
+    { zona: '01', secao: '0006', cadastrados: 3, apurado: 5 },
+    { zona: '01', secao: '0007', cadastrados: 2, apurado: 2 },
+  ]), [{ zona: '01', secao: '0006', cadastrados: 6, apurado: 5 }]);
+});
 
 test('lista todos os eleitores das seções abaixo da meta', () => {
   const voters = buildMissingVoterRows({

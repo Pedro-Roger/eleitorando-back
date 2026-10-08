@@ -4,6 +4,23 @@ function normalizedSection(zone, section) {
   return `${Number.isFinite(z) ? z : ''}\u0000${Number.isFinite(s) ? s : ''}`;
 }
 
+function findMissingSections(rows = []) {
+  const sections = new Map();
+  for (const row of rows) {
+    const key = normalizedSection(row.zona, row.secao);
+    const current = sections.get(key) || {
+      zona: String(row.zona ?? ''),
+      secao: String(row.secao ?? ''),
+      cadastrados: 0,
+      apurado: 0,
+    };
+    current.cadastrados += Number(row.cadastrados) || 0;
+    current.apurado = Math.max(current.apurado, Number(row.apurado) || 0);
+    sections.set(key, current);
+  }
+  return [...sections.values()].filter((row) => row.cadastrados > row.apurado);
+}
+
 function buildMissingVoterRows({ voters = [], missingSections = [] }) {
   const sections = new Set(missingSections.map((row) => normalizedSection(row.zona, row.secao)));
 
@@ -30,4 +47,4 @@ function buildMissingVoterRows({ voters = [], missingSections = [] }) {
     ));
 }
 
-module.exports = { buildMissingVoterRows };
+module.exports = { buildMissingVoterRows, findMissingSections };

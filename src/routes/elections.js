@@ -7,7 +7,7 @@ const knex = require('../db/knex');
 const { requireRole } = require('../middleware/auth');
 const { buildComparisonRows } = require('../lib/electionComparison');
 const { buildElectionReport } = require('../lib/electionReport');
-const { buildMissingVoterRows } = require('../lib/missingVoterReport');
+const { buildMissingVoterRows, findMissingSections } = require('../lib/missingVoterReport');
 
 const router = Router();
 
@@ -400,7 +400,7 @@ async function loadDetailedComparison(req) {
 
 async function loadMissingVoterReport(req) {
   const comparison = await loadDetailedComparison(req);
-  const missingSections = comparison.rows.filter((row) => row.cadastrados > row.apurado);
+  const missingSections = findMissingSections(comparison.rows);
   if (!missingSections.length) return { comparison, voters: [] };
 
   let voterQuery = knex('voters as v')
