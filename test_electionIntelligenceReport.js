@@ -18,16 +18,23 @@ test('agrupa eleitores por cabo/subcabo e ordena por votos confirmados', () => {
   });
 
   assert.equal(report.detailed[0].subcabo, 'Ana');
+  assert.equal(report.detailed[0].city, 'Fortaleza');
+  assert.equal(report.detailed[0].percentualVotos, 100);
   assert.deepEqual(report.detailed[0], {
-    cabo: 'Carlos', subcabo: 'Ana', prometidos: 2, apurado: 10, votos: 2, faltantes: 0,
-    eleitores: [
-      { name: 'Bia', phone: '', city: 'Fortaleza', bairro: 'Centro', zona: '01', secao: '0002' },
-      { name: 'Caio', phone: '', city: 'Fortaleza', bairro: 'Centro', zona: '01', secao: '0002' },
-    ],
+    cabo: 'Carlos', subcabo: 'Ana', city: 'Fortaleza', prometidos: 2, apurado: 10, votos: 2, faltantes: 0,
+    percentualVotos: 100, percentualFaltantes: 0,
+    secoes: [{
+      city: 'Fortaleza', bairro: 'Centro', zona: '01', secao: '0002', prometidos: 2, apurado: 10, votos: 2,
+      faltantes: 0, percentualVotos: 100, percentualFaltantes: 0,
+      eleitores: ['Bia', 'Caio'],
+    }],
   });
   assert.equal(report.cabos[0].cabo, 'Carlos');
   assert.equal(report.cabos[0].votos, 2);
   assert.equal(report.cabos[1].faltantes, 1);
+  assert.equal(report.cabos[0].subcabos[0].subcabo, 'Ana');
+  assert.equal(report.subcabos[0].cabo, 'Carlos');
+  assert.equal(report.subcabos[0].percentualVotos, 100);
 });
 
 test('não duplica votos oficiais quando dois subcabos atuam na mesma seção', () => {

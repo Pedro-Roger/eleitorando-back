@@ -88,6 +88,7 @@ function buildComparisonRows({ voters = [], tseRows = [], candidateName = '' }) 
     const diferenca = section.cadastrados - apurado;
 
     rows.push({
+      city: section.city,
       cabo: section.cabo,
       subcabo: section.subcabo,
       zona: section.zona,
