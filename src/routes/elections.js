@@ -7,6 +7,7 @@ const knex = require('../db/knex');
 const { requireRole } = require('../middleware/auth');
 const { buildComparisonRows } = require('../lib/electionComparison');
 const { buildElectionReport } = require('../lib/electionReport');
+const { buildElectionIntelligenceReport } = require('../lib/electionIntelligenceReport');
 const { buildMissingVoterRows, findMissingSections } = require('../lib/missingVoterReport');
 
 const router = Router();
@@ -522,6 +523,102 @@ function sendMissingVotersPdf(res, report, voters) {
   doc.end();
 }
 
+function sendElectionIntelligencePdf(res, report) {
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 30 });
+  const usable = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'attachment; filename="inteligencia-eleitoral-eleitores.pdf"');
+  doc.pipe(res);
+  doc.font('Helvetica-Bold').fontSize(17).fillColor('#0F172A').text('Inteligência eleitoral — eleitores');
+  doc.font('Helvetica').fontSize(9).fillColor('#475569')
+    .text(`Candidato: ${report.candidateName} · grupos ordenados por votos confirmados (decrescente)`)
+    .text(`Gerado em ${new Date().toLocaleDateString('pt-BR')}`);
+  doc.moveDown(0.7);
+
+  const widths = [usable * 0.16, usable * 0.16, usable * 0.22, usable * 0.18, usable * 0.08, usable * 0.08, usable * 0.08, usable * 0.04];
+  for (const group of report.detailed) {
+    if (doc.y > doc.page.height - 150) doc.addPage();
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#0F172A')
+      .text(`${group.cabo || 'Cabo não informado'}${group.subcabo ? ` · Subcabo: ${group.subcabo}` : ''}`);
+    doc.font('Helvetica').fontSize(8).fillColor('#475569')
+      .text(`Prometidos: ${group.prometidos} · Votos apurados: ${group.apurado} · Confirmados: ${group.votos} · Não confirmados: ${group.faltantes}`);
+    doc.moveDown(0.25);
+    drawPdfTableRow(doc, ['Eleitor', 'Cidade', 'Bairro', 'Zona', 'Seção', 'Prometido', 'Cabo', 'Subcabo'], widths, { header: true });
+    group.eleitores.forEach((voter) => drawPdfTableRow(doc, [
+      voter.name, voter.city || '—', voter.bairro || '—', voter.zona, voter.secao, 1, group.cabo || '—', group.subcabo || '—',
+    ], widths));
+    doc.moveDown(0.45);
+  }
+  if (!report.detailed.length) doc.font('Helvetica').fontSize(10).text('Nenhum eleitor com zona e seção encontrado.');
+  doc.end();
+}
+
+function sendCaboRankingPdf(res, report) {
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36 });
+  const usable = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'attachment; filename="inteligencia-eleitoral-cabos.pdf"');
+  doc.pipe(res);
+  doc.font('Helvetica-Bold').fontSize(18).fillColor('#0F172A').text('Inteligência eleitoral — ranking de cabos');
+  doc.font('Helvetica').fontSize(10).fillColor('#475569')
+    .text(`Candidato: ${report.candidateName} · ordem decrescente por votos confirmados`)
+    .text(`Gerado em ${new Date().toLocaleDateString('pt-BR')}`);
+  doc.moveDown(0.8);
+  const widths = [usable * 0.07, usable * 0.22, usable * 0.15, usable * 0.15, usable * 0.15, usable * 0.12, usable * 0.14];
+  drawPdfTableRow(doc, ['#', 'Cabo', 'Prometidos', 'Votos apurados', 'Confirmados', 'Não confirmados', 'Cidade / bairro'], widths, { header: true });
+  report.cabos.forEach((cabo, index) => drawPdfTableRow(doc, [
+    index + 1, cabo.cabo || '—', cabo.prometidos, cabo.apurado, cabo.votos, cabo.faltantes, cabo.localidades.join(', ') || '—',
+  ], widths));
+  if (!report.cabos.length) doc.font('Helvetica').fontSize(10).text('Nenhum cabo com zona e seção encontrado.');
+  doc.end();
+}
+
+async function loadElectionIntelligenceReport(req) {
+  let { year, office, turn } = queryBase(req);
+  const candidateName = String(req.query.candidateName || '').trim();
+  if (!candidateName) {
+    const error = new Error('Parâmetro candidateName é obrigatório.');
+    error.status = 400;
+    throw error;
+  }
+
+  if (!req.query.office || !req.query.year) {
+    const foundRecord = await knex('election_results')
+      .whereRaw('UPPER(TRIM("candidateName")) = UPPER(?)', [candidateName])
+      .orderBy('year', 'desc')
+      .first('office', 'year');
+    if (foundRecord) {
+      if (!req.query.office) office = foundRecord.office;
+      if (!req.query.year) year = foundRecord.year;
+    }
+  }
+
+  let voterQuery = knex('voters as v')
+    .leftJoin('users as creator', 'v.createdById', 'creator.id')
+    .leftJoin('users as cabo', 'creator.parentId', 'cabo.id')
+    .whereNotNull('v.zone')
+    .whereNotNull('v.section');
+  const caboId = Number(req.query.caboId) || 0;
+  const subcaboId = Number(req.query.subcaboId) || 0;
+  if (subcaboId) voterQuery = voterQuery.where('v.createdById', subcaboId);
+  else if (caboId) {
+    const subs = await knex('users').where('parentId', caboId).select('id');
+    voterQuery = voterQuery.whereIn('v.createdById', [caboId, ...subs.map((row) => row.id)]);
+  }
+
+  const voters = await voterQuery.select(
+    'v.name', 'v.phone', 'v.city', 'v.neighborhood', 'v.zone', 'v.section',
+    'creator.name as creatorName', 'creator.role as creatorRole', 'cabo.name as caboName'
+  );
+  const tseRows = await knex('election_results')
+    .where({ year, office, turn, source: 'TSE' })
+    .whereRaw('UPPER(TRIM("candidateName")) = UPPER(?)', [candidateName])
+    .select('city', 'zone', 'section')
+    .sum('votes as total')
+    .groupBy('city', 'zone', 'section');
+  return buildElectionIntelligenceReport({ voters, tseRows, candidateName });
+}
+
 router.get('/relatorio-faltantes', requireRole('ADMIN'), async (req, res) => {
   const comparison = await loadDetailedComparison(req);
   res.json(buildElectionReport(comparison));
@@ -540,6 +637,14 @@ router.get('/relatorio-faltantes/eleitores/pdf', requireRole('ADMIN'), async (re
 router.get('/relatorio-faltantes/pdf', requireRole('ADMIN'), async (req, res) => {
   const comparison = await loadDetailedComparison(req);
   sendMissingReportPdf(res, buildElectionReport(comparison), comparison);
+});
+
+router.get('/inteligencia-eleitoral/eleitores/pdf', requireRole('ADMIN'), async (req, res) => {
+  sendElectionIntelligencePdf(res, await loadElectionIntelligenceReport(req));
+});
+
+router.get('/inteligencia-eleitoral/cabos/pdf', requireRole('ADMIN'), async (req, res) => {
+  sendCaboRankingPdf(res, await loadElectionIntelligenceReport(req));
 });
 
 
