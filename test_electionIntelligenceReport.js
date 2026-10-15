@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
-const { buildElectionIntelligenceReport } = require('./src/lib/electionIntelligenceReport');
+const { buildElectionIntelligenceReport, buildCaboSummaryModel } = require('./src/lib/electionIntelligenceReport');
 
 test('agrupa eleitores por cabo/subcabo e ordena por votos prometidos', () => {
   const report = buildElectionIntelligenceReport({
@@ -28,6 +28,7 @@ test('agrupa eleitores por cabo/subcabo e ordena por votos prometidos', () => {
   assert.equal(report.cabos[0].votos, 2);
   assert.equal(report.cabos[1].faltantes, 1);
   assert.equal(report.cabos[0].subcabos[0].subcabo, 'Ana');
+  assert.equal(report.cabos[0].subcabos[0].secoes, 1);
   assert.equal(report.subcabos[0].cabo, 'Carlos');
   assert.equal(report.subcabos[0].prometidos, 2);
   assert.equal(report.subcabos[0].apurado, 10);
@@ -86,6 +87,16 @@ test('monta hierarquia nominal, prioriza faltas e não duplica a seção compart
   assert.equal(report.sharedSections[0].prometidos, 5);
   assert.equal(report.sharedSections[0].apurado, 4);
   assert.equal(report.sharedSections[0].faltantes, 1);
+
+  const caboSummary = buildCaboSummaryModel(report);
+  assert.deepEqual(caboSummary.cabos.map(({ cabo, prometidos, prometidosExclusivos, apurado, faltantes }) => (
+    [cabo, prometidos, prometidosExclusivos, apurado, faltantes]
+  )), [['Felipe', 8, 5, 4, 4]]);
+  assert.equal(caboSummary.sections.length, 3);
+  assert.equal(caboSummary.sections.some((section) => section.compartilhadaEntreCabos), false);
+  assert.equal(caboSummary.sharedSections.length, 1);
+  assert.deepEqual(caboSummary.sharedSections[0].teams.map((team) => team.cabo).sort(), ['Felipe', 'Marina']);
+  assert.notEqual(report.totals.prometidos, caboSummary.cabos[0].prometidos);
 });
 
 test('não duplica votos oficiais quando dois subcabos atuam na mesma seção', () => {

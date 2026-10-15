@@ -7,7 +7,7 @@ const knex = require('../db/knex');
 const { requireRole } = require('../middleware/auth');
 const { buildComparisonRows } = require('../lib/electionComparison');
 const { buildElectionReport } = require('../lib/electionReport');
-const { buildElectionIntelligenceReport } = require('../lib/electionIntelligenceReport');
+const { buildElectionIntelligenceReport, buildCaboSummaryModel } = require('../lib/electionIntelligenceReport');
 const { buildMissingVoterRows } = require('../lib/missingVoterReport');
 const { addPdfPageNumbers } = require('../lib/pdfPageNumbers');
 
@@ -642,6 +642,7 @@ function drawTableWithBackground(doc, headers, rows, widths, options = {}) {
   drawRow(headers, headerFontSize, true, -1);
   // Corpo
   rows.forEach((row, idx) => drawRow(row, bodyFontSize, false, idx));
+  doc.x = xStart;
 }
 
 function formatNumber(value) {
@@ -706,6 +707,7 @@ function drawMetricCards(doc, metrics, options = {}) {
       .text(metric.label, x + 4, y + height - 17, { width: cardWidth - 8, align: 'center', lineBreak: false });
   });
   doc.y = y + height + 8;
+  doc.x = xStart;
 }
 
 function drawReportBand(doc, text, color = '#B74343') {
@@ -720,6 +722,7 @@ function drawReportBand(doc, text, color = '#B74343') {
   doc.font('Helvetica-Bold').fontSize(11).fillColor('#FFFFFF')
     .text(text, x + 10, top + 7, { width: width - 20 });
   doc.y = top + height + 8;
+  doc.x = x;
 }
 
 function drawIntelligenceSection(doc, cabo, subcabo, city, bairro, section) {
@@ -879,33 +882,12 @@ function sendElectionIntelligencePdf(res, report) {
   res.setHeader('Content-Disposition', 'attachment; filename="possiveis-nao-votantes-detalhado.pdf"');
   doc.pipe(res);
   drawIntelligenceHeader(doc, report, 'POSSÍVEIS NÃO VOTANTES - DIVERGÊNCIAS POR SEÇÃO', 'Detalhado por cabo, subcabo e seção');
-  drawMetricCards(doc, [
-    { value: report.selectedPrometidos, label: 'PROMESSAS NO FILTRO' },
-    { value: report.totals.prometidos, label: 'PROMESSAS NAS SEÇÕES' },
-    { value: report.totals.apurado, label: 'VOTOS TSE (SEÇÕES ÚNICAS)' },
-    { value: report.totals.faltantes, label: 'FALTANTES NAS SEÇÕES', color: '#B74343', background: '#FFF1F0' },
-    { value: formatPercent(report.totals.percentualVotos), label: 'COBERTURA NUMÉRICA' },
-  ], { height: 48, fontSize: 14, gap: 4 });
   doc.font('Helvetica').fontSize(9).fillColor('#334155')
-    .text('A diferença é calculada por seção. Os nomes mostram os cadastros daquele grupo; o TSE informa somente o total da seção e não identifica quem votou. Seções compartilhadas entram uma única vez nos totais globais.');
+    .text('A diferença e a cobertura aparecem junto de cada seção e consideram todos os cadastros nela. O TSE informa somente o total da seção e não identifica quem votou. Seções compartilhadas entre cabos são identificadas e listadas uma única vez.');
   doc.moveDown(0.6);
 
   drawReportBand(doc, '1º: POSSÍVEIS NÃO VOTANTES - SEÇÕES COM VOTOS INSUFICIENTES');
   walkIntelligenceSections(doc, report, true);
-  drawReportBand(doc, 'SUBTOTAL ÚNICO DAS SEÇÕES COM FALTA');
-  const missingSections = report.sectionAudits.filter((section) => section.faltantes > 0);
-  const missingTotals = missingSections.reduce((total, section) => ({
-    prometidos: total.prometidos + section.prometidos,
-    apurado: total.apurado + section.apurado,
-    faltantes: total.faltantes + section.faltantes,
-  }), { prometidos: 0, apurado: 0, faltantes: 0 });
-  drawMetricCards(doc, [
-    { value: missingTotals.prometidos, label: 'PROMESSAS' },
-    { value: missingTotals.apurado, label: 'VOTOS TSE' },
-    { value: missingTotals.faltantes, label: 'VOTOS FALTANTES', color: '#B74343', background: '#FFF1F0' },
-    { value: missingTotals.prometidos ? formatPercent((missingTotals.prometidos - missingTotals.faltantes) * 100 / missingTotals.prometidos) : '0,0%', label: 'COBERTURA' },
-  ], { height: 46, fontSize: 14 });
-
   drawReportBand(doc, '2º: DEMAIS SEÇÕES - SEM FALTA NUMÉRICA', '#607D91');
   walkIntelligenceSections(doc, report, false);
   doc.moveDown(0.5);
@@ -916,104 +898,123 @@ function sendElectionIntelligencePdf(res, report) {
 }
 
 function sendCaboSummaryPdf(res, report) {
-  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36, bufferPages: true });
+  const doc = new PDFDocument({ size: 'A4', margin: 40, bufferPages: true });
   const usable = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  const summary = buildCaboSummaryModel(report);
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', 'attachment; filename="resumo-votos-por-cabo.pdf"');
   doc.pipe(res);
-  drawIntelligenceHeader(doc, report, 'RESUMO POR CABO - PROMESSAS E APURAÇÃO DO TSE', 'Resumo por cabo com detalhamento por subcabo e localidade');
-  drawMetricCards(doc, [
-    { value: report.totals.prometidos, label: 'PROMESSAS NAS SEÇÕES' },
-    { value: report.totals.apurado, label: 'VOTOS TSE (SEÇÕES ÚNICAS)' },
-    { value: report.totals.faltantes, label: 'DIFERENÇA POSITIVA' , color: '#B74343', background: '#FFF1F0' },
-    { value: formatPercent(report.totals.percentualVotos), label: 'COBERTURA NUMÉRICA' },
-  ], { height: 48, fontSize: 15 });
-  doc.font('Helvetica').fontSize(9).fillColor('#334155')
-    .text('A apuração TSE e as faltas de seções compartilhadas não são atribuídas a cada cabo. Elas aparecem uma única vez no bloco próprio; os totais por cabo usam somente seções exclusivas.');
-  doc.moveDown(0.5);
-
-  const summaryWidths = [usable * 0.19, usable * 0.12, usable * 0.15, usable * 0.12, usable * 0.16, usable * 0.14, usable * 0.12];
-  const rows = report.cabos.map((cabo) => [
+  drawIntelligenceHeader(doc, report, 'RELATÓRIO RESUMIDO POR CABO', 'Ranking de promessas e detalhamento das seções');
+  drawReportBand(doc, 'RANKING DE CABOS - MAIOR PARA MENOR NÚMERO DE PROMESSAS', '#2861A8');
+  const rows = summary.cabos.map((cabo) => [
     cabo.cabo || 'Cadastro direto',
     formatNumber(cabo.prometidos),
-    formatNumber(cabo.prometidosExclusivos),
     formatNumber(cabo.apurado),
     formatNumber(cabo.faltantes),
     formatPercent(cabo.percentualVotos),
-    formatNumber(cabo.secoesCompartilhadas),
   ]);
   if (rows.length) {
-    drawTableWithBackground(doc, ['Cabo', 'Prometidos totais', 'Prometidos exclusivos', 'TSE exclusivo', 'Faltantes exclusivos', 'Cobertura exclusiva', 'Seções compartilhadas'], rows, summaryWidths, {
-      headerFontSize: 8,
+    drawTableWithBackground(doc, ['Cabo', 'Prometidos total', 'Votos TSE*', 'Faltantes*', 'Cobertura*'], rows,
+      [usable * .27, usable * .18, usable * .19, usable * .18, usable * .18], {
+      headerFontSize: 8.5,
       bodyFontSize: 9,
-      padding: 4,
-      alignments: ['left', 'right', 'right', 'right', 'right', 'right'],
+      padding: 5,
+      alignments: ['left', 'right', 'right', 'right', 'right'],
     });
   } else {
     doc.font('Helvetica').fontSize(9).fillColor('#52677A').text('Nenhum cabo com cadastro para os filtros selecionados.', { width: usable });
   }
 
-  for (const cabo of report.hierarchy || []) {
-    if (doc.y > doc.page.height - 95) doc.addPage();
-    drawReportBand(doc, `CABO: ${cabo.cabo} - ${formatNumber(cabo.prometidos)} votos prometidos`, '#344E63');
-    const summary = report.cabos.find((item) => item.cabo === cabo.cabo);
-    if (summary) {
-      doc.font('Helvetica').fontSize(8).fillColor('#52677A')
-        .text(`Seções exclusivas: ${formatNumber(summary.prometidosExclusivos)} promessas | TSE ${formatNumber(summary.apurado)} | faltantes ${formatNumber(summary.faltantes)} | cobertura ${formatPercent(summary.percentualVotos)} | promessas em seções compartilhadas ${formatNumber(summary.prometidosCompartilhados)}`);
+  doc.moveDown(0.35);
+  doc.font('Helvetica').fontSize(8).fillColor('#52677A')
+    .text('* TSE, faltantes e cobertura usam somente as seções exclusivas de cada cabo. Seções compartilhadas são mostradas abaixo uma vez, sem atribuir seus votos a um cabo.', { width: usable });
+
+  for (const cabo of summary.cabos) {
+    const hierarchy = (report.hierarchy || []).find((row) => row.cabo === cabo.cabo);
+    if (!hierarchy) continue;
+    if (doc.y > doc.page.height - 150) doc.addPage();
+    doc.moveDown(0.6);
+    doc.font('Helvetica-Bold').fontSize(15).fillColor('#18344B')
+      .text(`CABO: ${cabo.cabo} - DETALHAMENTO`, { width: usable });
+    drawMetricCards(doc, [
+      { value: cabo.prometidosExclusivos, label: 'PROMESSAS EXCLUSIVAS' },
+      { value: cabo.apurado, label: 'VOTOS TSE EXCLUSIVOS' },
+      { value: cabo.faltantes, label: 'FALTANTES EXCLUSIVOS', color: '#B74343', background: '#FFF1F0' },
+      { value: formatPercent(cabo.percentualVotos), label: 'COBERTURA EXCLUSIVA' },
+    ], { height: 55, fontSize: 16, gap: 0 });
+    if (cabo.prometidosCompartilhados) {
+      doc.font('Helvetica').fontSize(8).fillColor('#9A3412')
+        .text(`Total cadastrado neste cabo: ${formatNumber(cabo.prometidos)} promessas. Outras ${formatNumber(cabo.prometidosCompartilhados)} estão em seções compartilhadas e ficam fora dos indicadores exclusivos abaixo.`, { width: usable });
     }
-    const countedSections = new Set();
-    for (const subcabo of cabo.subcabos) {
-      doc.font('Helvetica-Bold').fontSize(9).fillColor('#18344B')
-        .text(`SUBCABO: ${subcabo.subcabo} - ${formatNumber(subcabo.prometidos)} promessas`);
-      for (const city of subcabo.cidades) {
-        for (const bairro of city.bairros) {
-          const detailRows = bairro.secoes.map((section) => {
-            const key = reportSectionKey(city.city, section.zona, section.secao);
-            const alreadyCounted = countedSections.has(key);
-            countedSections.add(key);
-            const sharedAcrossCabos = section.compartilhadaEntreCabos;
-            const attribution = sharedAcrossCabos ? 'Compartilhada - ver bloco abaixo' : alreadyCounted ? 'Já contada neste cabo' : formatNumber(section.apurado);
-            return [
-              section.zona, section.secao, formatNumber(section.prometidosGrupo), attribution,
-              sharedAcrossCabos || alreadyCounted ? '-' : formatNumber(section.faltantes),
-              sharedAcrossCabos || alreadyCounted ? '-' : formatPercent(section.percentualVotos),
-            ];
-          });
-          if (doc.y > doc.page.height - 85) doc.addPage();
-          doc.font('Helvetica-Bold').fontSize(8).fillColor('#475569')
-            .text(`Cidade: ${city.city} (${formatNumber(city.prometidos)} promessas) > Bairro: ${bairro.bairro} (${formatNumber(bairro.prometidos)} promessas)`);
-          drawTableWithBackground(doc, ['Zona', 'Seção', 'Prometidos', 'TSE', 'Faltantes', 'Cobertura'], detailRows, [usable * .12, usable * .12, usable * .17, usable * .27, usable * .16, usable * .16], {
-            headerFontSize: 8,
-            bodyFontSize: 8,
-            padding: 3,
-            alignments: ['center', 'center', 'right', 'left', 'right', 'right'],
-          });
-        }
-      }
+
+    doc.moveDown(0.4);
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#18344B').text('SUBCABOS POR VOTOS PROMETIDOS', { width: usable });
+    const subcaboRows = cabo.subcabos.map((subcabo) => [
+      subcabo.subcabo || 'Cadastro direto', formatNumber(subcabo.prometidos), formatNumber(subcabo.secoes),
+      formatNumber(subcabo.apurado), formatNumber(subcabo.faltantes),
+    ]);
+    if (subcaboRows.length) {
+      drawTableWithBackground(doc, ['Subcabo', 'Promessas', 'Seções', 'Votos TSE*', 'Faltantes*'], subcaboRows,
+        [usable * .29, usable * .17, usable * .14, usable * .2, usable * .2], {
+          headerFontSize: 8,
+          bodyFontSize: 8.5,
+          padding: 4,
+          alignments: ['left', 'right', 'right', 'right', 'right'],
+        });
+    } else {
+      doc.font('Helvetica').fontSize(8.5).fillColor('#52677A').text('Nenhum subcabo cadastrado para este cabo.', { width: usable });
+    }
+    doc.font('Helvetica').fontSize(7.5).fillColor('#52677A')
+      .text('* TSE e faltantes dos subcabos usam somente seções exclusivas daquele subcabo.', { width: usable });
+
+    const caboSections = summary.sections.filter((section) => section.teams.some((team) => team.cabo === cabo.cabo));
+    const orderedSections = [...caboSections].sort((a, b) => (
+      Number(b.faltantes > 0) - Number(a.faltantes > 0)
+      || b.faltantes - a.faltantes
+      || b.prometidos - a.prometidos
+      || a.city.localeCompare(b.city, 'pt-BR')
+      || Number(a.zona) - Number(b.zona)
+      || Number(a.secao) - Number(b.secao)
+    ));
+    doc.moveDown(0.4);
+    doc.font('Helvetica-Bold').fontSize(11).fillColor('#18344B')
+      .text('SEÇÕES COM DIFERENÇA PRIMEIRO; DEMAIS DEPOIS', { width: usable });
+    const sectionRows = orderedSections.map((section) => [
+      `${section.teams.filter((team) => team.cabo === cabo.cabo).map((team) => team.subcabo || 'Cadastro direto').join(', ')} / ${section.city} / ${section.bairros.join(', ') || 'Bairro não informado'}`,
+      section.zona, section.secao, formatNumber(section.prometidos), formatNumber(section.apurado), formatNumber(section.faltantes),
+    ]);
+    if (sectionRows.length) {
+      drawTableWithBackground(doc, ['Subcabo / Cidade / Bairro', 'Zona', 'Seção', 'Prom.', 'TSE', 'Faltam'], sectionRows,
+        [usable * .36, usable * .12, usable * .12, usable * .12, usable * .12, usable * .16], {
+          headerFontSize: 7.5,
+          bodyFontSize: 8,
+          padding: 3,
+          alignments: ['left', 'center', 'center', 'right', 'right', 'right'],
+        });
+    } else {
+      doc.font('Helvetica').fontSize(8.5).fillColor('#52677A').text('Nenhuma seção exclusiva encontrada para este cabo.', { width: usable });
     }
   }
 
   drawReportBand(doc, 'SEÇÕES COMPARTILHADAS ENTRE CABOS - CONTADAS UMA ÚNICA VEZ', '#8A5A24');
-  const sharedRows = report.sharedSections.map((section) => [
+  const sharedRows = summary.sharedSections.map((section) => [
     section.teams.map((team) => [team.cabo, team.subcabo].filter(Boolean).join(' / ') || 'Cadastro direto').join(', '),
-    section.city || '-', section.bairros.join(', ') || '-', section.zona, section.secao,
+    section.city || '-', section.bairros.join(', ') || 'Bairro não informado', section.zona, section.secao,
     formatNumber(section.prometidos), formatNumber(section.apurado), formatNumber(section.faltantes), formatPercent(section.percentualVotos),
   ]);
   if (sharedRows.length) {
     drawTableWithBackground(doc,
       ['Cabos / subcabos', 'Cidade', 'Bairro(s)', 'Zona', 'Seção', 'Prometidos', 'TSE', 'Faltantes', 'Cobertura'],
       sharedRows,
-      [usable * .18, usable * .11, usable * .15, usable * .07, usable * .07, usable * .10, usable * .10, usable * .10, usable * .12],
+      [usable * .18, usable * .11, usable * .14, usable * .07, usable * .07, usable * .11, usable * .11, usable * .1, usable * .11],
       { headerFontSize: 7.5, bodyFontSize: 8, padding: 3, alignments: ['left', 'left', 'left', 'center', 'center', 'right', 'right', 'right', 'right'] }
     );
   } else {
     doc.font('Helvetica').fontSize(8).fillColor('#52677A').text('Nenhuma seção associada a mais de um cabo nos filtros selecionados.', { width: usable });
   }
   doc.moveDown(0.35);
-  doc.font('Helvetica-Bold').fontSize(9).fillColor('#18344B')
-    .text(`TOTAL ÚNICO DAS SEÇÕES: ${formatNumber(report.totals.prometidos)} promessas | ${formatNumber(report.totals.apurado)} votos TSE | ${formatNumber(report.totals.faltantes)} faltantes | cobertura ${formatPercent(report.totals.percentualVotos)}`);
   doc.font('Helvetica').fontSize(8).fillColor('#52677A')
-    .text('Cobertura = mínimo(promessas, TSE) / promessas. Seções compartilhadas são detalhadas uma vez e não entram nos totais exclusivos de cada cabo.');
+    .text('Cobertura exclusiva = mínimo(promessas exclusivas, votos TSE exclusivos) / promessas exclusivas. Nas seções compartilhadas, o TSE mostra o total oficial da seção, não quantos votos pertencem a cada equipe.', { width: usable });
   addPdfPageNumbers(doc);
   doc.end();
 }
@@ -1027,8 +1028,6 @@ function sendCaboRankingPdf(res, report) {
   drawIntelligenceHeader(doc, report, 'RANKING DE CABOS E SUBCABOS', 'Classificação por votos prometidos');
   doc.font('Helvetica').fontSize(9).fillColor('#475569')
     .text('Ordenação: votos prometidos (decrescente); * identifica empate em votos prometidos. Apuração, confirmados e faltantes por equipe consideram apenas seções exclusivas; seções compartilhadas são detalhadas à parte para não duplicar votos TSE.');
-  doc.font('Helvetica-Bold').fontSize(9).fillColor('#18344B')
-    .text(`Totais únicos nas seções filtradas: ${formatNumber(report.totals.prometidos)} promessas | ${formatNumber(report.totals.apurado)} votos TSE | ${formatNumber(report.totals.faltantes)} faltantes | cobertura ${formatPercent(report.totals.percentualVotos)}`);
   doc.moveDown(0.4);
 
   const widths = [usable * 0.04, usable * 0.18, usable * 0.14, usable * 0.12, usable * 0.12, usable * 0.12, usable * 0.12, usable * 0.08, usable * 0.08];

@@ -128,6 +128,7 @@ function finishCabo(cabo, auditBySection) {
         ...exclusiveSummary,
         prometidos: totalSummary.prometidos,
         prometidosExclusivos: exclusiveSummary.prometidos,
+        secoes: subcabo.sections.size,
         secoesCompartilhadas: [...subcabo.sections.keys()].filter((key) => (auditBySection.get(key)?.teams.length || 0) > 1).length,
       };
     })
@@ -363,6 +364,7 @@ function buildElectionIntelligenceReport({ voters = [], teamSectionRows, tseRows
       ...exclusiveSummary,
       prometidos: totalSummary.prometidos,
       prometidosExclusivos: exclusiveSummary.prometidos,
+      secoes: subcabo.sections.size,
       secoesCompartilhadas: subcabo.sections.size - exclusiveSections.size,
     };
   }).sort(byPromised);
@@ -383,4 +385,16 @@ function buildElectionIntelligenceReport({ voters = [], teamSectionRows, tseRows
   };
 }
 
-module.exports = { buildElectionIntelligenceReport };
+function buildCaboSummaryModel(report) {
+  const caboNames = new Set(report.cabos.map((cabo) => normalized(cabo.cabo)));
+  const relevantSections = report.sectionAudits.filter((section) => (
+    section.teams.some((team) => caboNames.has(normalized(team.cabo)))
+  ));
+  return {
+    cabos: report.cabos,
+    sections: relevantSections.filter((section) => !section.compartilhadaEntreCabos),
+    sharedSections: relevantSections.filter((section) => section.compartilhadaEntreCabos),
+  };
+}
+
+module.exports = { buildElectionIntelligenceReport, buildCaboSummaryModel };
