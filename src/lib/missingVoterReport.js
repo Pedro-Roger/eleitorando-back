@@ -1,14 +1,15 @@
-function normalizedSection(zone, section) {
+function normalizedSection(zone, section, city = '') {
   const z = Number.parseInt(String(zone ?? ''), 10);
   const s = Number.parseInt(String(section ?? ''), 10);
-  return `${Number.isFinite(z) ? z : ''}\u0000${Number.isFinite(s) ? s : ''}`;
+  return `${String(city || '').trim().toLocaleUpperCase('pt-BR')}\u0000${Number.isFinite(z) ? z : ''}\u0000${Number.isFinite(s) ? s : ''}`;
 }
 
 function findMissingSections(rows = []) {
   const sections = new Map();
   for (const row of rows) {
-    const key = normalizedSection(row.zona, row.secao);
+    const key = normalizedSection(row.zona, row.secao, row.city);
     const current = sections.get(key) || {
+      ...(row.city ? { city: row.city } : {}),
       zona: String(row.zona ?? ''),
       secao: String(row.secao ?? ''),
       cadastrados: 0,
@@ -22,13 +23,15 @@ function findMissingSections(rows = []) {
 }
 
 function buildMissingVoterRows({ voters = [], missingSections = [] }) {
-  const sections = new Set(missingSections.map((row) => normalizedSection(row.zona, row.secao)));
+  const sections = new Set(missingSections.map((row) => normalizedSection(row.zona, row.secao, row.city)));
 
   return voters
-    .filter((voter) => sections.has(normalizedSection(voter.zone, voter.section)))
+    .filter((voter) => sections.has(normalizedSection(voter.zone, voter.section, voter.city)))
     .map((voter) => ({
       name: String(voter.name || '').trim() || 'Sem nome informado',
       phone: String(voter.phone || '').trim() || '—',
+      city: String(voter.city || '').trim() || '—',
+      neighborhood: String(voter.neighborhood || '').trim() || '—',
       cabo: String(voter.creatorRole || '').toUpperCase() === 'SUBCABO'
         ? String(voter.caboName || '').trim()
         : String(voter.creatorName || '').trim(),

@@ -101,7 +101,7 @@ function finishCabo(cabo) {
   };
 }
 
-function buildElectionIntelligenceReport({ voters = [], tseRows = [], candidateName = '', filters = {} }) {
+function buildElectionIntelligenceReport({ voters = [], tseRows = [], candidateName = '', filters = {}, year, office, turn }) {
   const official = new Map();
   for (const row of tseRows) {
     const key = sectionOf(row);
@@ -111,6 +111,7 @@ function buildElectionIntelligenceReport({ voters = [], tseRows = [], candidateN
   const groups = new Map();
   const cabos = new Map();
   const subcabos = new Map();
+  const sectionAudits = new Map();
 
   for (const voter of voters) {
     const zona = numberText(voter.zone, 2);
@@ -123,6 +124,14 @@ function buildElectionIntelligenceReport({ voters = [], tseRows = [], candidateN
     const location = { city, bairro, zona, secao };
     const sectionKey = sectionOf(voter);
     const apurado = official.get(sectionKey) || 0;
+    const audit = sectionAudits.get(sectionKey) || {
+      city, bairros: new Set(), zona, secao, prometidos: 0, apurado, teams: new Map(),
+    };
+    audit.prometidos += 1;
+    audit.apurado = Math.max(audit.apurado, apurado);
+    audit.bairros.add(bairro);
+    audit.teams.set(`${normalized(team.cabo)}\u0000${normalized(team.subcabo)}`, team);
+    sectionAudits.set(sectionKey, audit);
     const groupKey = `${normalized(team.cabo)}\u0000${normalized(team.subcabo)}\u0000${normalized(city)}`;
     const group = groups.get(groupKey) || {
       cabo: team.cabo,
@@ -168,6 +177,25 @@ function buildElectionIntelligenceReport({ voters = [], tseRows = [], candidateN
     subcabos.set(flatSubcaboKey, { cabo: cabo.cabo, ...subcabo });
   }
 
+  if (!filters.cabo && !filters.subcabo) {
+    for (const row of tseRows) {
+      const key = sectionOf(row);
+      if (sectionAudits.has(key)) continue;
+      const zona = numberText(row.zone, 2);
+      const secao = numberText(row.section, 4);
+      if (!zona || !secao) continue;
+      sectionAudits.set(key, {
+        city: text(row.city) || 'Cidade não informada',
+        bairros: new Set(),
+        zona,
+        secao,
+        prometidos: 0,
+        apurado: official.get(key) || 0,
+        teams: new Map(),
+      });
+    }
+  }
+
   const detailed = [...groups.values()].map(finishGroup).sort(byVotes);
   const caboRanking = [...cabos.values()].map(finishCabo).sort(byVotes);
   const subcaboRanking = [...subcabos.values()].map((subcabo) => ({
@@ -178,7 +206,45 @@ function buildElectionIntelligenceReport({ voters = [], tseRows = [], candidateN
     ...summarize(subcabo.sections),
   })).sort(byVotes);
 
-  return { candidateName, filters, detailed, cabos: caboRanking, subcabos: subcaboRanking };
+  const sectionAuditRows = [...sectionAudits.values()]
+    .map((section) => {
+      const votos = Math.min(section.prometidos, section.apurado);
+      const faltantes = Math.max(section.prometidos - section.apurado, 0);
+      return {
+        city: section.city,
+        bairros: [...section.bairros].sort(compareText),
+        zona: section.zona,
+        secao: section.secao,
+        prometidos: section.prometidos,
+        apurado: section.apurado,
+        votos,
+        faltantes,
+        percentualVotos: percentage(votos, section.prometidos),
+        percentualFaltantes: percentage(faltantes, section.prometidos),
+        teams: [...section.teams.values()].sort((a, b) => (
+          compareText(a.cabo, b.cabo) || compareText(a.subcabo, b.subcabo)
+        )),
+      };
+    })
+    .sort((a, b) => (
+      compareText(a.city, b.city)
+      || Number(a.zona) - Number(b.zona)
+      || Number(a.secao) - Number(b.secao)
+    ));
+  const totals = sectionAuditRows.reduce((total, section) => ({
+    prometidos: total.prometidos + section.prometidos,
+    apurado: total.apurado + section.apurado,
+    votos: total.votos + section.votos,
+    faltantes: total.faltantes + section.faltantes,
+  }), { prometidos: 0, apurado: 0, votos: 0, faltantes: 0 });
+  totals.percentualVotos = percentage(totals.votos, totals.prometidos);
+  totals.percentualFaltantes = percentage(totals.faltantes, totals.prometidos);
+
+  return {
+    candidateName, year, office, turn, filters, detailed,
+    cabos: caboRanking, subcabos: subcaboRanking,
+    sectionAudits: sectionAuditRows, totals,
+  };
 }
 
 module.exports = { buildElectionIntelligenceReport };

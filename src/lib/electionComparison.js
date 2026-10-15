@@ -34,6 +34,10 @@ function teamForVoter(voter) {
 
 function comparisonStatus(diferenca) {
   if (diferenca > 0) return `Faltam ${diferenca} votos`;
+  if (diferenca < 0) {
+    const excess = Math.abs(diferenca);
+    return `Apurado excede em ${excess} ${excess === 1 ? 'voto' : 'votos'}`;
+  }
   return 'OK';
 }
 

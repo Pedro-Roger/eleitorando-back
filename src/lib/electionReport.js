@@ -1,67 +1,82 @@
-function reportTeam(row) {
-  return { cabo: String(row.cabo || '').trim(), subcabo: String(row.subcabo || '').trim() };
-}
-
-function teamKey(team) {
-  return `${team.cabo}\u0000${team.subcabo}`;
+function teamKey(cabo, subcabo) {
+  return `${cabo}\u0000${subcabo}`;
 }
 
 function sectionKey(row) {
-  return `${row.zona}\u0000${row.secao}`;
+  return `${String(row.city || '').trim().toLocaleUpperCase('pt-BR')}\u0000${row.zona}\u0000${row.secao}`;
 }
 
 function compareNames(a, b) {
   return String(a || '').localeCompare(String(b || ''), 'pt-BR');
 }
 
-function buildElectionReport({ candidateName, comparisonRows, rows = [] }) {
+function buildElectionReport({ candidateName, year, office, turn, filters = {}, comparisonRows, rows = [] }) {
   const sourceRows = comparisonRows || rows;
-  const summaryMap = new Map();
-  const detailMap = new Map();
-  const totalSectionMap = new Map();
+  const teams = new Map();
+  const sections = new Map();
 
   for (const row of sourceRows) {
-    const team = reportTeam(row);
-    const key = teamKey(team);
+    const cabo = String(row.cabo || '').trim();
+    const subcabo = String(row.subcabo || '').trim();
+    const key = sectionKey(row);
     const cadastrados = Number(row.cadastrados) || 0;
     const apurado = Number(row.apurado) || 0;
-    const confirmados = Math.min(cadastrados, apurado);
-    const faltantes = Math.max(cadastrados - apurado, 0);
-    const summary = summaryMap.get(key) || {
-      ...team, cadastrados: 0, confirmados: 0, faltantes: 0, sections: new Set(),
+    const teamId = teamKey(cabo, subcabo);
+    const team = teams.get(teamId) || {
+      cabo,
+      subcabo,
+      cadastrados: 0,
+      sections: new Set(),
     };
-    summary.cadastrados += cadastrados;
-    summary.confirmados += confirmados;
-    summary.faltantes += faltantes;
-    summary.sections.add(sectionKey(row));
-    summaryMap.set(key, summary);
+    team.cadastrados += cadastrados;
+    team.sections.add(key);
+    teams.set(teamId, team);
 
-    const detailKey = `${key}\u0000${sectionKey(row)}`;
-    const detail = detailMap.get(detailKey) || {
-      ...team,
+    const section = sections.get(key) || {
+      ...(row.city ? { city: row.city } : {}),
       zona: row.zona,
       secao: row.secao,
       cadastrados: 0,
       apurado: 0,
+      teams: new Map(),
     };
-    detail.cadastrados += cadastrados;
-    // O apurado é o mesmo por zona/seção em todas as equipes: nunca somar duplicado.
-    detail.apurado = Math.max(detail.apurado, apurado);
-    detailMap.set(detailKey, detail);
-
-    const totalSection = totalSectionMap.get(sectionKey(row)) || {
-      zona: row.zona, secao: row.secao, cadastrados: 0, apurado: 0,
-    };
-    totalSection.cadastrados += cadastrados;
-    totalSection.apurado = Math.max(totalSection.apurado, apurado);
-    totalSectionMap.set(sectionKey(row), totalSection);
+    section.cadastrados += cadastrados;
+    section.apurado = Math.max(section.apurado, apurado);
+    section.teams.set(teamId, { cabo, subcabo });
+    sections.set(key, section);
   }
 
-  const summary = [...summaryMap.values()]
-    .map(({ sections, ...row }) => ({
-      ...row,
-      secoes: sections.size,
-      percentualFaltantes: row.cadastrados ? Math.round((row.faltantes / row.cadastrados) * 100) : 0,
+  const sectionDetails = [...sections.values()]
+    .map((section) => {
+      const confirmados = Math.min(section.cadastrados, section.apurado);
+      const faltantes = Math.max(section.cadastrados - section.apurado, 0);
+      const { teams: sectionTeams, ...detail } = section;
+      return {
+        ...detail,
+        confirmados,
+        faltantes,
+        percentualFaltantes: section.cadastrados
+          ? Math.round((faltantes / section.cadastrados) * 100)
+          : 0,
+        teams: [...sectionTeams.values()].sort((a, b) => (
+          compareNames(a.cabo, b.cabo) || compareNames(a.subcabo, b.subcabo)
+        )),
+      };
+    })
+    .sort((a, b) => (
+      compareNames(a.city, b.city)
+      || Number(a.zona) - Number(b.zona)
+      || Number(a.secao) - Number(b.secao)
+    ));
+
+  const missingKeys = new Set(sectionDetails
+    .filter((section) => section.faltantes > 0)
+    .map((section) => sectionKey(section)));
+  const summary = [...teams.values()]
+    .map(({ sections: teamSections, ...team }) => ({
+      ...team,
+      secoes: teamSections.size,
+      secoesComFaltantes: [...teamSections].filter((key) => missingKeys.has(key)).length,
     }))
     .sort((a, b) => (
       compareNames(a.cabo, b.cabo)
@@ -69,27 +84,19 @@ function buildElectionReport({ candidateName, comparisonRows, rows = [] }) {
       || compareNames(a.subcabo, b.subcabo)
     ));
 
-  const details = [...detailMap.values()]
-    .map((row) => ({
-      ...row,
-      confirmados: Math.min(row.cadastrados, row.apurado),
-      faltantes: Math.max(row.cadastrados - row.apurado, 0),
-    }))
-    .map((row) => ({
-      ...row,
-      percentualFaltantes: row.cadastrados ? Math.round((row.faltantes / row.cadastrados) * 100) : 0,
-    }))
-    .sort((a, b) => Number(a.zona) - Number(b.zona) || Number(a.secao) - Number(b.secao));
-
   return {
     candidateName,
+    year,
+    office,
+    turn,
+    filters,
     summary,
-    details,
-    missing: details.filter((row) => row.faltantes > 0),
-    totalCadastrados: summary.reduce((total, row) => total + row.cadastrados, 0),
-    totalConfirmados: [...totalSectionMap.values()].reduce((total, row) => total + Math.min(row.cadastrados, row.apurado), 0),
-    totalApurado: [...totalSectionMap.values()].reduce((total, row) => total + row.apurado, 0),
-    totalFaltantes: [...totalSectionMap.values()].reduce((total, row) => total + Math.max(row.cadastrados - row.apurado, 0), 0),
+    details: sectionDetails,
+    missing: sectionDetails.filter((section) => section.faltantes > 0),
+    totalCadastrados: sectionDetails.reduce((total, section) => total + section.cadastrados, 0),
+    totalConfirmados: sectionDetails.reduce((total, section) => total + section.confirmados, 0),
+    totalApurado: sectionDetails.reduce((total, section) => total + section.apurado, 0),
+    totalFaltantes: sectionDetails.reduce((total, section) => total + section.faltantes, 0),
   };
 }
 

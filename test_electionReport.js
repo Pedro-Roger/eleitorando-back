@@ -15,17 +15,15 @@ test('resume equipes e lista somente faltas positivas por zona e seção', () =>
   });
 
   assert.deepEqual(report.summary, [
-    { cabo: 'Felipe', subcabo: 'João', cadastrados: 3, confirmados: 3, faltantes: 0, secoes: 1, percentualFaltantes: 0 },
-    { cabo: 'Felipe', subcabo: 'Pedro', cadastrados: 4, confirmados: 4, faltantes: 0, secoes: 1, percentualFaltantes: 0 },
-    { cabo: 'Maria', subcabo: 'Ana', cadastrados: 8, confirmados: 5, faltantes: 3, secoes: 1, percentualFaltantes: 38 },
-    { cabo: 'Maria', subcabo: '', cadastrados: 0, confirmados: 0, faltantes: 0, secoes: 1, percentualFaltantes: 0 },
+    { cabo: 'Felipe', subcabo: 'João', cadastrados: 3, secoes: 1, secoesComFaltantes: 0 },
+    { cabo: 'Felipe', subcabo: 'Pedro', cadastrados: 4, secoes: 1, secoesComFaltantes: 0 },
+    { cabo: 'Maria', subcabo: 'Ana', cadastrados: 8, secoes: 1, secoesComFaltantes: 1 },
+    { cabo: 'Maria', subcabo: '', cadastrados: 0, secoes: 1, secoesComFaltantes: 0 },
   ]);
   assert.deepEqual(report.missing, [
-    { cabo: 'Maria', subcabo: 'Ana', zona: '02', secao: '0002', cadastrados: 8, apurado: 5, confirmados: 5, faltantes: 3, percentualFaltantes: 38 },
+    { zona: '02', secao: '0002', cadastrados: 8, apurado: 5, confirmados: 5, faltantes: 3, percentualFaltantes: 38, teams: [{ cabo: 'Maria', subcabo: 'Ana' }] },
   ]);
-  assert.deepEqual(report.details.find((row) => row.zona === '02' && row.secao === '0002'), {
-    cabo: 'Maria', subcabo: 'Ana', zona: '02', secao: '0002', cadastrados: 8, apurado: 5, confirmados: 5, faltantes: 3, percentualFaltantes: 38,
-  });
+  assert.equal(report.details.length, 3);
   assert.equal(report.totalCadastrados, 15);
   assert.equal(report.totalConfirmados, 12);
   assert.equal(report.totalApurado, 18);
@@ -40,5 +38,37 @@ test('aceita o formato rows usado pela rota de comparação', () => {
   });
 
   assert.equal(report.totalFaltantes, 1);
-  assert.deepEqual(report.missing, [{ cabo: 'Felipe', subcabo: 'Elio', zona: '118', secao: '0476', cadastrados: 2, apurado: 1, confirmados: 1, faltantes: 1, percentualFaltantes: 50 }]);
+  assert.deepEqual(report.missing, [{ zona: '118', secao: '0476', cadastrados: 2, apurado: 1, confirmados: 1, faltantes: 1, percentualFaltantes: 50, teams: [{ cabo: 'Felipe', subcabo: 'Elio' }] }]);
+});
+
+test('mantém cidades diferentes separadas mesmo quando zona e seção coincidem', () => {
+  const report = buildElectionReport({
+    comparisonRows: [
+      { city: 'FORTALEZA', cabo: 'Equipe A', zona: '01', secao: '0001', cadastrados: 3, apurado: 5 },
+      { city: 'SOBRAL', cabo: 'Equipe B', zona: '01', secao: '0001', cadastrados: 4, apurado: 2 },
+    ],
+  });
+
+  assert.equal(report.totalApurado, 7);
+  assert.equal(report.totalConfirmados, 5);
+  assert.equal(report.totalFaltantes, 2);
+  assert.equal(report.details.length, 2);
+  assert.deepEqual(report.details.map((row) => row.city).sort(), ['FORTALEZA', 'SOBRAL']);
+});
+
+test('calcula a falta uma vez por seção e mantém todos os cabos associados', () => {
+  const report = buildElectionReport({
+    comparisonRows: [
+      { city: 'Fortaleza', cabo: 'Ana', subcabo: 'Bia', zona: '01', secao: '0001', cadastrados: 2, apurado: 3 },
+      { city: 'Fortaleza', cabo: 'Ana', subcabo: 'Caio', zona: '01', secao: '0001', cadastrados: 2, apurado: 3 },
+    ],
+  });
+
+  assert.equal(report.details.length, 1);
+  assert.equal(report.details[0].cadastrados, 4);
+  assert.equal(report.details[0].apurado, 3);
+  assert.equal(report.details[0].faltantes, 1);
+  assert.deepEqual(report.details[0].teams.map((team) => team.subcabo), ['Bia', 'Caio']);
+  assert.equal(report.summary.every((row) => row.secoesComFaltantes === 1), true);
+  assert.equal(Object.hasOwn(report.summary[0], 'faltantes'), false);
 });

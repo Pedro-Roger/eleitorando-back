@@ -41,6 +41,13 @@ function queryBase(req) {
   };
 }
 
+function matchesNumberFilter(value, filter) {
+  const rawFilter = String(filter ?? '').trim();
+  if (!rawFilter) return true;
+  if (!/^\d+$/.test(rawFilter)) return false;
+  return Number.parseInt(String(value ?? '').trim(), 10) === Number.parseInt(rawFilter, 10);
+}
+
 // Cargos disponíveis na base TSE (eleição passada) para o seletor do cruzamento.
 router.get('/offices', requireRole('ADMIN'), async (req, res) => {
   const rows = await knex('election_results')
@@ -63,7 +70,7 @@ router.get('/offices', requireRole('ADMIN'), async (req, res) => {
 router.get('/candidates', requireRole('ADMIN'), async (req, res) => {
   let { year, office, turn } = queryBase(req);
   const candidateName = String(req.query.candidateName || '').trim();
-  
+
   if (candidateName && !req.query.office) {
     const foundOffice = await knex('election_results')
       .where('candidateName', candidateName)
@@ -393,10 +400,25 @@ async function loadDetailedComparison(req) {
 
   const zoneFilter = String(req.query.zone || '').trim();
   const sectionFilter = String(req.query.section || '').trim();
-  if (zoneFilter) rows = rows.filter((row) => row.zona.includes(zoneFilter));
-  if (sectionFilter) rows = rows.filter((row) => row.secao.includes(sectionFilter));
+  const cityFilter = String(req.query.city || '').trim().toLocaleUpperCase('pt-BR');
+  if (cityFilter) rows = rows.filter((row) => String(row.city || '').toLocaleUpperCase('pt-BR').includes(cityFilter));
+  if (zoneFilter) rows = rows.filter((row) => matchesNumberFilter(row.zona, zoneFilter));
+  if (sectionFilter) rows = rows.filter((row) => matchesNumberFilter(row.secao, sectionFilter));
 
-  return { candidateName, year, office, turn, rows };
+  const [cabo, subcabo] = await Promise.all([
+    caboId ? knex('users').where({ id: caboId }).first('name') : null,
+    subcaboId ? knex('users').where({ id: subcaboId }).first('name') : null,
+  ]);
+  return {
+    candidateName, year, office, turn, rows,
+    filters: {
+      cabo: cabo?.name || (caboId ? `ID ${caboId}` : ''),
+      subcabo: subcabo?.name || (subcaboId ? `ID ${subcaboId}` : ''),
+      city: String(req.query.city || '').trim(),
+      zone: zoneFilter,
+      section: sectionFilter,
+    },
+  };
 }
 
 async function loadMissingVoterReport(req) {
@@ -420,7 +442,7 @@ async function loadMissingVoterReport(req) {
   }
 
   const voters = await voterQuery.select(
-    'v.name', 'v.phone', 'v.zone', 'v.section',
+    'v.name', 'v.phone', 'v.city', 'v.neighborhood', 'v.zone', 'v.section',
     'creator.name as creatorName', 'creator.role as creatorRole', 'cabo.name as caboName'
   );
 
@@ -437,58 +459,193 @@ router.get('/comparativo-eleitores', requireRole('ADMIN'), async (req, res) => {
   res.json(comparison);
 });
 
-function drawPdfTableRow(doc, values, widths, { header = false } = {}) {
-  const rowHeight = 20;
-  const bottom = doc.page.height - doc.page.margins.bottom;
-  if (doc.y + rowHeight > bottom) doc.addPage();
-  const y = doc.y;
-  let x = doc.page.margins.left;
-  doc.font(header ? 'Helvetica-Bold' : 'Helvetica').fontSize(8).fillColor('#111827');
-  values.forEach((value, index) => {
-    if (header) doc.rect(x, y, widths[index], rowHeight).fill('#E8EEF8');
-    doc.fillColor('#111827').text(String(value ?? ''), x + 4, y + 6, {
-      width: widths[index] - 8,
-      height: rowHeight,
-      ellipsis: true,
-      lineBreak: false,
-    });
-    x += widths[index];
+/**
+ * Desenha uma linha de tabela com suporte a quebra de linha (word-wrap) e
+ * repetição automática do cabeçalho ao trocar de página.
+ * Retorna a altura real da linha desenhada.
+ */
+function drawWrappedTableRow(doc, values, widths, options = {}) {
+  const { header = false, fontSize = 8, lineHeight = 1.3, padding = 4 } = options;
+  const font = header ? 'Helvetica-Bold' : 'Helvetica';
+  const fontSizePt = fontSize;
+  const leading = fontSizePt * lineHeight;
+  const bottomMargin = doc.page.margins.bottom;
+  const pageBottom = doc.page.height - bottomMargin;
+  const xStart = doc.page.margins.left;
+
+  // Medir a altura necessária para cada célula
+  doc.font(font).fontSize(fontSizePt);
+  const cellHeights = values.map((value, i) => {
+    const text = String(value ?? '');
+    const w = widths[i] - padding * 2;
+    if (!text) return leading;
+    // heightOfString considera word-wrap quando width é passado
+    return Math.max(leading, doc.heightOfString(text, { width: w, align: 'left', lineBreak: true }) + padding * 2);
   });
-  doc.moveTo(doc.page.margins.left, y + rowHeight)
-    .lineTo(doc.page.width - doc.page.margins.right, y + rowHeight)
-    .strokeColor('#CBD5E1')
-    .lineWidth(0.5)
+  const rowHeight = Math.max(...cellHeights);
+
+  // Verificar se precisa de nova página ANTES de desenhar
+  if (doc.y + rowHeight > pageBottom) {
+    doc.addPage();
+    // Redesenhar cabeçalho na nova página se esta linha for cabeçalho ou se tivermos header salvo
+    if (options.headerRow && !header) {
+      drawWrappedTableRow(doc, options.headerRow.values, options.headerRow.widths, { ...options.headerRow.options, header: true });
+    }
+  }
+
+  const y = doc.y;
+  let x = xStart;
+
+  // Fundo do cabeçalho
+  if (header) {
+    doc.fillColor('#E8EEF8').rect(xStart, y, widths.reduce((a, b) => a + b, 0), rowHeight).fill();
+  }
+
+  // Desenhar texto de cada célula com word-wrap
+  doc.font(font).fontSize(fontSizePt).fillColor('#111827');
+  values.forEach((value, i) => {
+    const cellX = x + padding;
+    const cellW = widths[i] - padding * 2;
+    const text = String(value ?? '');
+    if (text) {
+      doc.text(text, cellX, y + padding, {
+        width: cellW,
+        align: 'left',
+        lineBreak: true,
+      });
+    }
+    x += widths[i];
+  });
+
+  // Linha inferior
+  const lineY = y + rowHeight;
+  doc.moveTo(xStart, lineY)
+    .lineTo(xStart + widths.reduce((a, b) => a + b, 0), lineY)
+    .strokeColor(header ? '#94A3B8' : '#E2E8F0')
+    .lineWidth(header ? 1 : 0.5)
     .stroke();
-  doc.y = y + rowHeight;
+
+  doc.y = lineY;
+  return rowHeight;
+}
+
+/**
+ * Desenha uma tabela completa com cabeçalho que repete nas páginas seguintes.
+ * rows = array de arrays de valores (strings/números)
+ */
+function drawFullTable(doc, headers, rows, widths, options = {}) {
+  const { headerFontSize = 8, bodyFontSize = 7.5, headerBg = '#E8EEF8', altRowBg = '#F8FAFC' } = options;
+
+  // Guardar info do cabeçalho para repetir em novas páginas
+  const headerInfo = { values: headers, widths, options: { header: true, fontSize: headerFontSize } };
+
+  // Desenhar cabeçalho
+  drawWrappedTableRow(doc, headers, widths, { header: true, fontSize: headerFontSize, ...options });
+
+  // Desenhar linhas do corpo
+  rows.forEach((row, rowIndex) => {
+    // Fundo alternado
+    if (rowIndex % 2 === 1 && altRowBg) {
+      const yBefore = doc.y;
+      const rowH = drawWrappedTableRow(doc, row, widths, { fontSize: bodyFontSize, headerRow: headerInfo, ...options });
+      // Pintar fundo depois de saber a altura (pdfkit não suporta bem rect atrás do texto já escrito)
+      // Alternativa: medir antes e desenhar rect antes do texto
+    } else {
+      drawWrappedTableRow(doc, row, widths, { fontSize: bodyFontSize, headerRow: headerInfo, ...options });
+    }
+  });
+}
+
+/**
+ * Versão melhorada que mede altura primeiro, desenha fundo, depois texto
+ */
+function drawTableWithBackground(doc, headers, rows, widths, options = {}) {
+  const { headerFontSize = 8, bodyFontSize = 7.5, headerBg = '#E8EEF8', altRowBg = '#F8FAFC', padding = 3 } = options;
+  const pageBottom = doc.page.height - doc.page.margins.bottom;
+  const totalWidth = widths.reduce((a, b) => a + b, 0);
+  const xStart = doc.page.margins.left;
+
+  function measureRowHeight(values, fontSize) {
+    doc.font('Helvetica').fontSize(fontSize);
+    return Math.max(...values.map((value, i) => {
+      const text = String(value ?? '');
+      const w = widths[i] - padding * 2;
+      if (!text) return fontSize * 1.3;
+      return Math.max(fontSize * 1.3, doc.heightOfString(text, { width: w, align: 'left', lineBreak: true }) + padding * 2);
+    }));
+  }
+
+  function drawRow(values, fontSize, isHeader, rowIdx) {
+    const rowHeight = measureRowHeight(values, fontSize);
+
+    // Nova página se não couber
+    if (doc.y + rowHeight > pageBottom) {
+      doc.addPage();
+      // Redesenhar cabeçalho
+      const headerY = doc.y;
+      const h = measureRowHeight(headers, headerFontSize);
+      doc.fillColor(headerBg).rect(xStart, headerY, totalWidth, h).fill();
+      doc.font('Helvetica-Bold').fontSize(headerFontSize).fillColor('#111827');
+      let hx = xStart;
+      headers.forEach((hv, i) => {
+        doc.text(String(hv), hx + padding, headerY + padding, { width: widths[i] - padding * 2, align: 'left', lineBreak: true });
+        hx += widths[i];
+      });
+      doc.moveTo(xStart, headerY + h).lineTo(xStart + totalWidth, headerY + h).strokeColor('#94A3B8').lineWidth(1).stroke();
+      doc.y = headerY + h;
+    }
+
+    const y = doc.y;
+    // Fundo da linha
+    if (isHeader) {
+      doc.fillColor(headerBg).rect(xStart, y, totalWidth, rowHeight).fill();
+    } else if (rowIdx % 2 === 1 && altRowBg) {
+      doc.fillColor(altRowBg).rect(xStart, y, totalWidth, rowHeight).fill();
+    }
+
+    // Texto
+    doc.font(isHeader ? 'Helvetica-Bold' : 'Helvetica').fontSize(fontSize).fillColor('#111827');
+    let cx = xStart;
+    values.forEach((value, i) => {
+      doc.text(String(value ?? ''), cx + padding, y + padding, {
+        width: widths[i] - padding * 2,
+        align: 'left',
+        lineBreak: true,
+      });
+      cx += widths[i];
+    });
+
+    // Linha inferior
+    const lineY = y + rowHeight;
+    doc.moveTo(xStart, lineY)
+      .lineTo(xStart + totalWidth, lineY)
+      .strokeColor(isHeader ? '#94A3B8' : '#E2E8F0')
+      .lineWidth(isHeader ? 1 : 0.5)
+      .stroke();
+
+    doc.y = lineY;
+  }
+
+  // Cabeçalho
+  drawRow(headers, headerFontSize, true, -1);
+  // Corpo
+  rows.forEach((row, idx) => drawRow(row, bodyFontSize, false, idx));
+}
+
+function formatNumber(value) {
+  return Number(value || 0).toLocaleString('pt-BR');
+}
+
+function reportSectionKey(city, zone, section) {
+  const normalizeNumber = (value, width) => {
+    const parsed = Number.parseInt(String(value ?? '').trim(), 10);
+    return Number.isFinite(parsed) ? String(parsed).padStart(width, '0') : '';
+  };
+  return `${String(city || '').trim().toLocaleUpperCase('pt-BR')}|${normalizeNumber(zone, 2)}|${normalizeNumber(section, 4)}`;
 }
 
 function compactPdfValue(value) {
-  return String(value ?? '').replace(/\s+/g, ' ').replace(/[—–]/g, '-').trim();
-}
-
-function drawCompactPdfRow(doc, values, widths, { header = false } = {}) {
-  const rowHeight = header ? 16 : 15;
-  const bottom = doc.page.height - doc.page.margins.bottom;
-  if (doc.y + rowHeight > bottom) doc.addPage();
-  const y = doc.y;
-  let x = doc.page.margins.left;
-  doc.font(header ? 'Helvetica-Bold' : 'Helvetica').fontSize(header ? 7.5 : 7).fillColor('#111827');
-  values.forEach((value, index) => {
-    if (header) doc.rect(x, y, widths[index], rowHeight).fill('#E8EEF8');
-    doc.fillColor('#111827').text(compactPdfValue(value), x + 3, y + 4, {
-      width: widths[index] - 6,
-      height: rowHeight,
-      ellipsis: true,
-      lineBreak: false,
-    });
-    x += widths[index];
-  });
-  doc.moveTo(doc.page.margins.left, y + rowHeight)
-    .lineTo(doc.page.width - doc.page.margins.right, y + rowHeight)
-    .strokeColor('#CBD5E1')
-    .lineWidth(0.35)
-    .stroke();
-  doc.y = y + rowHeight;
+  return String(value ?? '').replace(/[\r\n]+/g, ' ').trim();
 }
 
 function formatPercent(value) {
@@ -504,49 +661,81 @@ function formatReportFilters(filters = {}) {
   return labels.length ? `Filtros - ${labels.join(' | ')}` : 'Filtros - todos os cabos, cidades, zonas e seções';
 }
 
+function addPdfPageNumbers(doc) {
+  const pages = doc.bufferedPageRange();
+  for (let page = pages.start; page < pages.start + pages.count; page += 1) {
+    doc.switchToPage(page);
+    doc.font('Helvetica').fontSize(8).fillColor('#64748B')
+      .text(`Página ${page - pages.start + 1} de ${pages.count}`, doc.page.margins.left, doc.page.height - 24, {
+        width: doc.page.width - doc.page.margins.left - doc.page.margins.right,
+        align: 'right',
+      });
+  }
+  doc.flushPages();
+}
+
 function sendMissingReportPdf(res, report, meta) {
-  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36 });
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36, bufferPages: true });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', 'attachment; filename="relatorio-votos-faltantes.pdf"');
   doc.pipe(res);
 
   const usable = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+
+  // Cabeçalho do documento
   doc.font('Helvetica-Bold').fontSize(18).fillColor('#0F172A').text('Relatório de votos faltantes');
   doc.font('Helvetica').fontSize(10).fillColor('#475569')
-    .text(`Candidata: ${report.candidateName} · ${meta.office} · ${meta.turn}º turno`)
-    .text(`Gerado em ${new Date().toLocaleDateString('pt-BR')}`);
+    .text(`Candidata: ${report.candidateName} · ${meta.office} · ${meta.year} · ${meta.turn}º turno`)
+    .text(`Gerado em ${new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`)
+    .text(formatReportFilters(report.filters))
+    .text('Critério: faltantes = máximo(prometidos − apurado, 0); confirmados = mínimo(prometidos, apurado).');
   doc.moveDown(0.8);
 
-  const metricWidth = usable / 3;
+  // Cards de métricas
+  const metricWidth = usable / 4;
   const metricY = doc.y;
-  [['Prometidos', report.totalCadastrados], ['Confirmados TSE', report.totalConfirmados], ['Faltantes', report.totalFaltantes]]
+  [['Prometidos', report.totalCadastrados], ['Apurado TSE', report.totalApurado], ['Confirmados', report.totalConfirmados], ['Faltantes', report.totalFaltantes]]
     .forEach(([label, value], index) => {
       const x = doc.page.margins.left + index * metricWidth;
       doc.roundedRect(x, metricY, metricWidth - 8, 42, 6).fill('#F8FAFC');
-      doc.font('Helvetica-Bold').fontSize(16).fillColor('#0F172A').text(String(value), x + 10, metricY + 8);
+      doc.font('Helvetica-Bold').fontSize(16).fillColor('#0F172A').text(formatNumber(value), x + 10, metricY + 8);
       doc.font('Helvetica').fontSize(8).fillColor('#64748B').text(label, x + 10, metricY + 27);
     });
   doc.y = metricY + 56;
 
+  // Resumo por cabo e subcabo
   doc.font('Helvetica-Bold').fontSize(12).fillColor('#0F172A').text('Resumo por cabo e subcabo');
   doc.moveDown(0.3);
-  const summaryWidths = [usable * 0.21, usable * 0.21, usable * 0.16, usable * 0.16, usable * 0.14, usable * 0.12];
-  drawPdfTableRow(doc, ['Cabo', 'Subcabo', 'Prometidos', 'Confirmados', 'Faltantes', '% faltantes'], summaryWidths, { header: true });
-  report.summary.forEach((row) => drawPdfTableRow(doc, [row.cabo || '—', row.subcabo || '—', row.cadastrados, row.confirmados, row.faltantes, `${row.percentualFaltantes}%`], summaryWidths));
+  const summaryWidths = [usable * 0.28, usable * 0.28, usable * 0.14, usable * 0.14, usable * 0.16];
+  const summaryRows = report.summary.map(row => [
+    row.cabo || '—', row.subcabo || '—', formatNumber(row.cadastrados),
+    formatNumber(row.secoes), formatNumber(row.secoesComFaltantes)
+  ]);
+  drawTableWithBackground(doc, ['Cabo', 'Subcabo', 'Prometidos', 'Seções', 'Seções com faltantes'], summaryRows, summaryWidths);
 
   doc.moveDown(1);
   doc.font('Helvetica-Bold').fontSize(12).fillColor('#0F172A').text('Detalhamento por zona e seção');
   doc.moveDown(0.3);
-  const detailWidths = [usable * 0.14, usable * 0.14, usable * 0.1, usable * 0.12, usable * 0.13, usable * 0.13, usable * 0.1, usable * 0.08, usable * 0.06];
-  drawPdfTableRow(doc, ['Cabo', 'Subcabo', 'Zona', 'Seção', 'Prometidos', 'Confirmados', 'Faltantes', '% faltantes', 'Status'], detailWidths, { header: true });
-  report.details.forEach((row) => drawPdfTableRow(doc, [row.cabo || '—', row.subcabo || '—', row.zona, row.secao, row.cadastrados, row.confirmados, row.faltantes, `${row.percentualFaltantes}%`, row.faltantes ? 'Faltam votos' : 'OK'], detailWidths));
-  if (!report.details.length) doc.font('Helvetica').fontSize(9).fillColor('#047857').text('Nenhum cadastro encontrado.');
+  const detailWidths = [usable * 0.21, usable * 0.12, usable * 0.07, usable * 0.07, usable * 0.10, usable * 0.10, usable * 0.09, usable * 0.08, usable * 0.08, usable * 0.08];
+  const detailRows = report.details.map(row => [
+    row.teams.map((team) => [team.cabo, team.subcabo].filter(Boolean).join(' / ') || 'Cadastro direto').join(', '),
+    row.city || '—', row.zona, row.secao,
+    formatNumber(row.cadastrados), formatNumber(row.apurado), formatNumber(row.confirmados),
+    formatNumber(row.faltantes), formatPercent(row.percentualFaltantes),
+    row.apurado > row.cadastrados ? 'Apurado excede' : row.faltantes ? 'Faltam votos' : 'OK'
+  ]);
+  drawTableWithBackground(doc, ['Equipes associadas', 'Cidade', 'Zona', 'Seção', 'Prometidos', 'Apurado TSE', 'Confirmados', 'Faltantes', '% faltantes', 'Status'], detailRows, detailWidths);
+  if (!report.details.length) {
+    doc.moveDown(0.5);
+    doc.font('Helvetica').fontSize(9).fillColor('#047857').text('Nenhum cadastro encontrado.');
+  }
 
+  addPdfPageNumbers(doc);
   doc.end();
 }
 
 function sendMissingVotersPdf(res, report, voters) {
-  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36 });
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36, bufferPages: true });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', 'attachment; filename="relatorio-eleitores-secoes-faltantes.pdf"');
   doc.pipe(res);
@@ -554,38 +743,56 @@ function sendMissingVotersPdf(res, report, voters) {
   const usable = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   doc.font('Helvetica-Bold').fontSize(18).fillColor('#0F172A').text('Eleitores nas seções abaixo da meta');
   doc.font('Helvetica').fontSize(10).fillColor('#475569')
-    .text(`Candidata: ${report.candidateName} · ${voters.length} eleitor(es)`)
-    .text(`Gerado em ${new Date().toLocaleDateString('pt-BR')}`);
+    .text(`Candidata: ${report.candidateName} · ${report.office} · ${report.year} · ${report.turn}º turno · ${voters.length} eleitor(es)`)
+    .text(`Gerado em ${new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`)
+    .text(formatReportFilters(report.filters))
+    .text('A situação é da seção; este relatório não identifica individualmente quem compareceu.');
   doc.moveDown(0.8);
 
-  const widths = [usable * 0.22, usable * 0.16, usable * 0.16, usable * 0.16, usable * 0.12, usable * 0.18];
-  drawPdfTableRow(doc, ['Nome', 'Telefone', 'Cabo', 'Subcabo', 'Zona', 'Seção'], widths, { header: true });
-  voters.forEach((voter) => drawPdfTableRow(doc, [voter.name, voter.phone, voter.cabo || '—', voter.subcabo || '—', voter.zona, voter.secao], widths));
-  if (!voters.length) doc.font('Helvetica').fontSize(9).fillColor('#047857').text('Nenhum eleitor encontrado nas seções abaixo da meta.');
+  const widths = [usable * 0.18, usable * 0.10, usable * 0.12, usable * 0.12, usable * 0.11, usable * 0.11, usable * 0.07, usable * 0.07, usable * 0.12];
+  const rows = voters.map(v => [
+    v.name, v.phone, v.city || '—', v.neighborhood || '—',
+    v.cabo || '—', v.subcabo || '—', v.zona, v.secao, 'Seção abaixo da meta'
+  ]);
+  drawTableWithBackground(doc, ['Eleitor', 'Telefone', 'Cidade', 'Bairro', 'Cabo', 'Subcabo', 'Zona', 'Seção', 'Situação da seção'], rows, widths);
+  if (!voters.length) {
+    doc.moveDown(0.5);
+    doc.font('Helvetica').fontSize(9).fillColor('#047857').text('Nenhum eleitor encontrado nas seções abaixo da meta.');
+  }
+  addPdfPageNumbers(doc);
   doc.end();
 }
 
 function sendElectionIntelligencePdf(res, report) {
-  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 30 });
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 30, bufferPages: true });
   const usable = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', 'attachment; filename="inteligencia-eleitoral-eleitores.pdf"');
   doc.pipe(res);
   doc.font('Helvetica-Bold').fontSize(17).fillColor('#0F172A').text('Inteligência eleitoral - eleitores');
   doc.font('Helvetica').fontSize(9).fillColor('#475569')
-    .text(`Candidato: ${report.candidateName} - grupos ordenados por votos confirmados (decrescente)`)
+    .text(`Candidato: ${report.candidateName} · ${report.office} · ${report.year} · ${report.turn}º turno`)
     .text(formatReportFilters(report.filters))
-    .text(`Gerado em ${new Date().toLocaleDateString('pt-BR')}`);
+    .text(`Totais por seção: prometidos ${formatNumber(report.totals.prometidos)} · apurado TSE ${formatNumber(report.totals.apurado)} · confirmados ${formatNumber(report.totals.votos)} · faltantes ${formatNumber(report.totals.faltantes)} (${formatPercent(report.totals.percentualFaltantes)})`)
+    .text('Cada apuração oficial é contada uma vez por seção; a situação abaixo pertence à seção, não a cada eleitor individual.')
+    .text(`Gerado em ${new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`);
   doc.moveDown(0.7);
 
-  const summaryWidths = [usable * 0.18, usable * 0.18, usable * 0.19, usable * 0.09, usable * 0.09, usable * 0.08, usable * 0.09, usable * 0.10];
-  drawCompactPdfRow(doc, ['Cabo', 'Subcabo', 'Cidade', 'Prometidos', 'Votos', '%', 'Faltantes', '% faltantes'], summaryWidths, { header: true });
-  report.detailed.forEach((group) => drawCompactPdfRow(doc, [
-    group.cabo || 'Cadastro direto', group.subcabo || 'Cadastro direto', group.city || '-', group.prometidos,
-    group.votos, formatPercent(group.percentualVotos), group.faltantes, formatPercent(group.percentualFaltantes),
-  ], summaryWidths));
+  // Resumo por grupo (cabo/subcabo/cidade)
+  const summaryWidths = [usable * 0.18, usable * 0.18, usable * 0.18, usable * 0.09, usable * 0.09, usable * 0.08, usable * 0.1, usable * 0.10];
+  const summaryRows = report.detailed.map(group => [
+    group.cabo || 'Cadastro direto', group.subcabo || 'Cadastro direto', group.city || '-',
+    formatNumber(group.prometidos), formatNumber(group.votos), formatPercent(group.percentualVotos),
+    formatNumber(group.faltantes), formatPercent(group.percentualFaltantes),
+  ]);
+  drawTableWithBackground(doc, ['Cabo', 'Subcabo', 'Cidade', 'Prometidos', 'Votos', '%', 'Faltantes', '% faltantes'], summaryRows, summaryWidths, { bodyFontSize: 7 });
 
-  const widths = [usable * 0.22, usable * 0.13, usable * 0.08, usable * 0.08, usable * 0.10, usable * 0.10, usable * 0.09, usable * 0.10, usable * 0.10];
+  // Detalhamento por seção
+  const widths = [usable * 0.18, usable * 0.12, usable * 0.12, usable * 0.06, usable * 0.06, usable * 0.15, usable * 0.08, usable * 0.07, usable * 0.08, usable * 0.08];
+  const audits = new Map(report.sectionAudits.map((section) => [
+    reportSectionKey(section.city, section.zona, section.secao),
+    section,
+  ]));
   for (const group of report.detailed) {
     if (doc.y > doc.page.height - 110) doc.addPage();
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#0F172A')
@@ -593,47 +800,68 @@ function sendElectionIntelligencePdf(res, report) {
     doc.font('Helvetica').fontSize(8).fillColor('#475569')
       .text(`Prometidos: ${group.prometidos} - Votos: ${group.votos} (${formatPercent(group.percentualVotos)}) - Faltantes: ${group.faltantes} (${formatPercent(group.percentualFaltantes)})`);
     doc.moveDown(0.25);
-    drawCompactPdfRow(doc, ['Eleitores', 'Bairro', 'Zona', 'Seção', 'Prometidos', 'Votos', '%', 'Faltantes', '% faltantes'], widths, { header: true });
-    group.secoes.forEach((section) => drawCompactPdfRow(doc, [
-      section.eleitores.join(', '), section.bairro, section.zona, section.secao, section.prometidos, section.votos,
-      formatPercent(section.percentualVotos), section.faltantes, formatPercent(section.percentualFaltantes),
-    ], widths));
+    const voterRows = group.secoes.flatMap((section) => {
+      const audit = audits.get(reportSectionKey(group.city, section.zona, section.secao)) || section;
+      return section.eleitores.map((name) => [
+        name || '—', group.city || '—', section.bairro || '—', section.zona, section.secao,
+        audit.faltantes > 0 ? `Faltam ${formatNumber(audit.faltantes)} na seção` : audit.apurado > audit.prometidos ? 'Apurado excede' : 'Sem faltantes',
+        formatNumber(audit.prometidos), formatNumber(audit.votos), formatNumber(audit.apurado), formatNumber(audit.faltantes),
+      ]);
+    });
+    drawTableWithBackground(doc, ['Eleitor', 'Cidade', 'Bairro', 'Zona', 'Seção', 'Situação da seção', 'Prometidos', 'Confirmados', 'Apurado TSE', 'Faltantes'], voterRows, widths, { bodyFontSize: 7 });
     doc.moveDown(0.45);
   }
   if (!report.detailed.length) doc.font('Helvetica').fontSize(10).text('Nenhum eleitor com zona e seção encontrado.');
+  addPdfPageNumbers(doc);
   doc.end();
 }
 
 function sendCaboRankingPdf(res, report) {
-  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36 });
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36, bufferPages: true });
   const usable = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', 'attachment; filename="inteligencia-eleitoral-cabos.pdf"');
   doc.pipe(res);
   doc.font('Helvetica-Bold').fontSize(18).fillColor('#0F172A').text('Inteligência eleitoral - ranking de cabos e subcabos');
   doc.font('Helvetica').fontSize(10).fillColor('#475569')
-    .text(`Candidato: ${report.candidateName} · ordem decrescente por votos confirmados`)
+    .text(`Candidato: ${report.candidateName} · ${report.office} · ${report.year} · ${report.turn}º turno`)
+    .text('Ordenação: votos confirmados (decrescente), prometidos (decrescente) e nome. Empates: votos e prometidos iguais.')
+    .text(`Totais únicos por seção: prometidos ${formatNumber(report.totals.prometidos)} · apurado TSE ${formatNumber(report.totals.apurado)} · confirmados ${formatNumber(report.totals.votos)} · faltantes ${formatNumber(report.totals.faltantes)}.`)
     .text(formatReportFilters(report.filters))
-    .text(`Gerado em ${new Date().toLocaleDateString('pt-BR')}`);
+    .text(`Gerado em ${new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`);
   doc.moveDown(0.8);
-  const widths = [usable * 0.05, usable * 0.20, usable * 0.10, usable * 0.10, usable * 0.10, usable * 0.08, usable * 0.08, usable * 0.09, usable * 0.20];
-  drawCompactPdfRow(doc, ['#', 'Cabo', 'Prometidos', 'Apurados', 'Votos', '%', 'Faltantes', '% faltantes', 'Cidade / bairro'], widths, { header: true });
-  report.cabos.forEach((cabo, index) => {
-    drawCompactPdfRow(doc, [
-      index + 1, cabo.cabo || 'Cadastro direto', cabo.prometidos, cabo.apurado, cabo.votos, formatPercent(cabo.percentualVotos),
-      cabo.faltantes, formatPercent(cabo.percentualFaltantes), cabo.localidades.join(', ') || '-',
-    ], widths);
-    if (doc.y > doc.page.height - 90) doc.addPage();
-    doc.font('Helvetica-Bold').fontSize(9).fillColor('#334155').text(`Subcabos de ${cabo.cabo || 'Cadastro direto'}`);
-    const subWidths = [usable * 0.05, usable * 0.22, usable * 0.11, usable * 0.11, usable * 0.10, usable * 0.08, usable * 0.09, usable * 0.24];
-    drawCompactPdfRow(doc, ['#', 'Subcabo', 'Prometidos', 'Apurados', 'Votos', '%', 'Faltantes', 'Cidade / bairro'], subWidths, { header: true });
-    cabo.subcabos.forEach((subcabo, subIndex) => drawCompactPdfRow(doc, [
-      subIndex + 1, subcabo.subcabo, subcabo.prometidos, subcabo.apurado, subcabo.votos, formatPercent(subcabo.percentualVotos),
-      subcabo.faltantes, subcabo.localidades.join(', ') || '-',
-    ], subWidths));
-    doc.moveDown(0.4);
+
+  const widths = [usable * 0.05, usable * 0.22, usable * 0.10, usable * 0.10, usable * 0.10, usable * 0.08, usable * 0.08, usable * 0.09, usable * 0.18];
+  const caboRows = report.cabos.map((cabo, index) => {
+    const firstTied = report.cabos.findIndex((entry) => entry.votos === cabo.votos && entry.prometidos === cabo.prometidos);
+    const tied = firstTied < index;
+    return [
+    tied ? `${firstTied + 1} (empate)` : index + 1, cabo.cabo || 'Cadastro direto', formatNumber(cabo.prometidos), formatNumber(cabo.apurado),
+    formatNumber(cabo.votos), formatPercent(cabo.percentualVotos), formatNumber(cabo.faltantes),
+    formatPercent(cabo.percentualFaltantes), cabo.localidades.join(', ') || '-'
+  ];
   });
+  drawTableWithBackground(doc, ['#', 'Cabo', 'Prometidos', 'Apurados', 'Confirmados', '% confirmados', 'Faltantes', '% faltantes', 'Cidade / bairro'], caboRows, widths, { bodyFontSize: 7 });
+
+  for (const cabo of report.cabos) {
+    if (doc.y > doc.page.height - 100) doc.addPage();
+    doc.font('Helvetica-Bold').fontSize(9).fillColor('#334155').text(`Subcabos de ${cabo.cabo || 'Cadastro direto'}`);
+    doc.moveDown(0.2);
+    const subWidths = [usable * 0.05, usable * 0.24, usable * 0.11, usable * 0.11, usable * 0.10, usable * 0.08, usable * 0.09, usable * 0.22];
+    const subRows = cabo.subcabos.map((subcabo, subIndex) => {
+      const firstTied = cabo.subcabos.findIndex((entry) => entry.votos === subcabo.votos && entry.prometidos === subcabo.prometidos);
+      const tied = firstTied < subIndex;
+      return [
+      tied ? `${firstTied + 1} (empate)` : subIndex + 1, subcabo.subcabo, formatNumber(subcabo.prometidos), formatNumber(subcabo.apurado),
+      formatNumber(subcabo.votos), formatPercent(subcabo.percentualVotos),
+      formatNumber(subcabo.faltantes), subcabo.localidades.join(', ') || '-'
+    ];
+    });
+    drawTableWithBackground(doc, ['#', 'Subcabo', 'Prometidos', 'Apurados', 'Confirmados', '% confirmados', 'Faltantes', 'Cidade / bairro'], subRows, subWidths, { bodyFontSize: 7 });
+    doc.moveDown(0.4);
+  }
   if (!report.cabos.length) doc.font('Helvetica').fontSize(10).text('Nenhum cabo com zona e seção encontrado.');
+  addPdfPageNumbers(doc);
   doc.end();
 }
 
@@ -670,11 +898,16 @@ async function loadElectionIntelligenceReport(req) {
     voterQuery = voterQuery.whereIn('v.createdById', [caboId, ...subs.map((row) => row.id)]);
   }
   const city = String(req.query.city || '').trim();
-  const zone = Number.parseInt(String(req.query.zone || '').trim(), 10);
-  const section = Number.parseInt(String(req.query.section || '').trim(), 10);
-  if (city) voterQuery = voterQuery.whereRaw('UPPER(TRIM(v.city)) = UPPER(?)', [city]);
+  const zoneInput = String(req.query.zone || '').trim();
+  const sectionInput = String(req.query.section || '').trim();
+  const zone = /^\d+$/.test(zoneInput) ? Number.parseInt(zoneInput, 10) : Number.NaN;
+  const section = /^\d+$/.test(sectionInput) ? Number.parseInt(sectionInput, 10) : Number.NaN;
+  if (city) voterQuery = voterQuery.whereRaw('UPPER(TRIM(v.city)) LIKE UPPER(?)', [`%${city}%`]);
   if (Number.isFinite(zone)) voterQuery = voterQuery.where('v.zone', zone);
   if (Number.isFinite(section)) voterQuery = voterQuery.where('v.section', section);
+  if ((zoneInput && !Number.isFinite(zone)) || (sectionInput && !Number.isFinite(section))) {
+    voterQuery = voterQuery.whereRaw('1 = 0');
+  }
 
   const voters = await voterQuery.select(
     'v.name', 'v.phone', 'v.city', 'v.neighborhood', 'v.zone', 'v.section',
@@ -683,20 +916,26 @@ async function loadElectionIntelligenceReport(req) {
   let tseQuery = knex('election_results')
     .where({ year, office, turn, source: 'TSE' })
     .whereRaw('UPPER(TRIM("candidateName")) = UPPER(?)', [candidateName]);
-  if (city) tseQuery = tseQuery.whereRaw('UPPER(TRIM(city)) = UPPER(?)', [city]);
+  if (city) tseQuery = tseQuery.whereRaw('UPPER(TRIM(city)) LIKE UPPER(?)', [`%${city}%`]);
   if (Number.isFinite(zone)) tseQuery = tseQuery.where('zone', zone);
   if (Number.isFinite(section)) tseQuery = tseQuery.where('section', section);
+  if ((zoneInput && !Number.isFinite(zone)) || (sectionInput && !Number.isFinite(section))) {
+    tseQuery = tseQuery.whereRaw('1 = 0');
+  }
   const tseRows = await tseQuery.select('city', 'zone', 'section').sum('votes as total').groupBy('city', 'zone', 'section');
   return buildElectionIntelligenceReport({
     voters,
     tseRows,
     candidateName,
+    year,
+    office,
+    turn,
     filters: {
       cabo: caboId ? `ID ${caboId}` : '',
       subcabo: subcaboId ? `ID ${subcaboId}` : '',
       city,
-      zone: Number.isFinite(zone) ? zone : '',
-      section: Number.isFinite(section) ? section : '',
+      zone: zoneInput,
+      section: sectionInput,
     },
   });
 }
@@ -718,7 +957,9 @@ router.get('/relatorio-faltantes/eleitores/pdf', requireRole('ADMIN'), async (re
 
 router.get('/relatorio-faltantes/pdf', requireRole('ADMIN'), async (req, res) => {
   const comparison = await loadDetailedComparison(req);
-  sendMissingReportPdf(res, buildElectionReport(comparison), comparison);
+  const report = buildElectionReport(comparison);
+  report.filters = comparison.filters;
+  sendMissingReportPdf(res, report, comparison);
 });
 
 router.get('/inteligencia-eleitoral/eleitores/pdf', requireRole('ADMIN'), async (req, res) => {

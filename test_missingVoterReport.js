@@ -21,7 +21,24 @@ test('lista todos os eleitores das seções abaixo da meta', () => {
   });
 
   assert.deepEqual(voters, [
-    { name: 'Ana', phone: '111', cabo: 'Felipe', subcabo: 'Pedro', zona: '01', secao: '0006' },
-    { name: 'Bia', phone: '222', cabo: 'Felipe', subcabo: 'Pedro', zona: '01', secao: '0006' },
+    { name: 'Ana', phone: '111', city: '—', neighborhood: '—', cabo: 'Felipe', subcabo: 'Pedro', zona: '01', secao: '0006' },
+    { name: 'Bia', phone: '222', city: '—', neighborhood: '—', cabo: 'Felipe', subcabo: 'Pedro', zona: '01', secao: '0006' },
   ]);
+});
+
+test('não mistura cidades que compartilham zona e seção', () => {
+  const missing = findMissingSections([
+    { city: 'Fortaleza', zona: '01', secao: '0006', cadastrados: 4, apurado: 1 },
+    { city: 'Sobral', zona: '01', secao: '0006', cadastrados: 1, apurado: 5 },
+  ]);
+  assert.equal(missing.length, 1);
+  assert.equal(missing[0].city, 'Fortaleza');
+  const voters = buildMissingVoterRows({
+    missingSections: missing,
+    voters: [
+      { name: 'Ana', city: 'Fortaleza', zone: '01', section: '0006' },
+      { name: 'Bia', city: 'Sobral', zone: '01', section: '0006' },
+    ],
+  });
+  assert.deepEqual(voters.map((voter) => voter.name), ['Ana']);
 });

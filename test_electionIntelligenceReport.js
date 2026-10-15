@@ -35,6 +35,9 @@ test('agrupa eleitores por cabo/subcabo e ordena por votos confirmados', () => {
   assert.equal(report.cabos[0].subcabos[0].subcabo, 'Ana');
   assert.equal(report.subcabos[0].cabo, 'Carlos');
   assert.equal(report.subcabos[0].percentualVotos, 100);
+  assert.equal(report.totals.prometidos, 3);
+  assert.equal(report.totals.apurado, 10);
+  assert.equal(report.sectionAudits.length, 2);
 });
 
 test('não duplica votos oficiais quando dois subcabos atuam na mesma seção', () => {
@@ -50,4 +53,7 @@ test('não duplica votos oficiais quando dois subcabos atuam na mesma seção', 
   assert.equal(report.cabos[0].apurado, 1);
   assert.equal(report.cabos[0].votos, 1);
   assert.equal(report.cabos[0].faltantes, 1);
+  assert.equal(report.sectionAudits[0].prometidos, 2);
+  assert.equal(report.sectionAudits[0].apurado, 1);
+  assert.equal(report.sectionAudits[0].faltantes, 1);
 });
