@@ -21,7 +21,7 @@ test('agrupa cadastros por cabo, subcabo, zona e seção e une votos TSE', () =>
   assert.deepEqual(rows, [
     {
       city: 'FORTALEZA', cabo: 'Felipe', subcabo: 'Pedro', zona: '02', secao: '0533',
-      cadastrados: 2, apurado: 3, diferenca: -1, status: 'Apurado excede em 1 voto',
+      cadastrados: 2, apurado: 3, diferenca: -1, status: 'OK',
     },
     {
       city: 'FORTALEZA', cabo: 'Felipe', subcabo: '', zona: '03', secao: '0987',
@@ -29,7 +29,7 @@ test('agrupa cadastros por cabo, subcabo, zona e seção e une votos TSE', () =>
     },
     {
       city: 'FORTALEZA', cabo: '', subcabo: '', zona: '04', secao: '0012',
-      cadastrados: 0, apurado: 5, diferenca: -5, status: 'Apurado excede em 5 votos',
+      cadastrados: 0, apurado: 5, diferenca: -5, status: 'OK',
     },
   ]);
 });

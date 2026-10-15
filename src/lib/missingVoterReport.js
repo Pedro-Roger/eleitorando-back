@@ -23,7 +23,10 @@ function findMissingSections(rows = []) {
 }
 
 function buildMissingVoterRows({ voters = [], missingSections = [] }) {
-  const sections = new Set(missingSections.map((row) => normalizedSection(row.zona, row.secao, row.city)));
+  const sections = new Map(missingSections.map((row) => [
+    normalizedSection(row.zona, row.secao, row.city),
+    Boolean(row.compartilhadaEntreCabos || row.compartilhada),
+  ]));
 
   return voters
     .filter((voter) => sections.has(normalizedSection(voter.zone, voter.section, voter.city)))
@@ -40,6 +43,7 @@ function buildMissingVoterRows({ voters = [], missingSections = [] }) {
         : '',
       zona: String(voter.zone || '').padStart(2, '0'),
       secao: String(voter.section || '').padStart(4, '0'),
+      compartilhada: sections.get(normalizedSection(voter.zone, voter.section, voter.city)),
     }))
     .sort((a, b) => (
       Number(a.zona) - Number(b.zona)

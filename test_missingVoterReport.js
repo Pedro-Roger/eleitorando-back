@@ -12,7 +12,7 @@ test('considera a falta pelo total da seção, mesmo com vários subcabos', () =
 
 test('lista todos os eleitores das seções abaixo da meta', () => {
   const voters = buildMissingVoterRows({
-    missingSections: [{ zona: '01', secao: '0006' }],
+    missingSections: [{ zona: '01', secao: '0006', compartilhada: true }],
     voters: [
       { name: 'Ana', phone: '111', zone: '1', section: '6', creatorName: 'Pedro', creatorRole: 'SUBCABO', caboName: 'Felipe' },
       { name: 'Bia', phone: '222', zone: '01', section: '0006', creatorName: 'Pedro', creatorRole: 'SUBCABO', caboName: 'Felipe' },
@@ -21,8 +21,8 @@ test('lista todos os eleitores das seções abaixo da meta', () => {
   });
 
   assert.deepEqual(voters, [
-    { name: 'Ana', phone: '111', city: '—', neighborhood: '—', cabo: 'Felipe', subcabo: 'Pedro', zona: '01', secao: '0006' },
-    { name: 'Bia', phone: '222', city: '—', neighborhood: '—', cabo: 'Felipe', subcabo: 'Pedro', zona: '01', secao: '0006' },
+    { name: 'Ana', phone: '111', city: '—', neighborhood: '—', cabo: 'Felipe', subcabo: 'Pedro', zona: '01', secao: '0006', compartilhada: true },
+    { name: 'Bia', phone: '222', city: '—', neighborhood: '—', cabo: 'Felipe', subcabo: 'Pedro', zona: '01', secao: '0006', compartilhada: true },
   ]);
 });
 

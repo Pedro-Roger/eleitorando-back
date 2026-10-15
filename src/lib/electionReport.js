@@ -3,14 +3,23 @@ function teamKey(cabo, subcabo) {
 }
 
 function sectionKey(row) {
-  return `${String(row.city || '').trim().toLocaleUpperCase('pt-BR')}\u0000${row.zona}\u0000${row.secao}`;
+  const zone = Number.parseInt(String(row.zona ?? row.zone ?? ''), 10);
+  const section = Number.parseInt(String(row.secao ?? row.section ?? ''), 10);
+  return `${String(row.city || '').trim().toLocaleUpperCase('pt-BR')}\u0000${Number.isFinite(zone) ? zone : ''}\u0000${Number.isFinite(section) ? section : ''}`;
+}
+
+function teamFromSectionRow(row) {
+  if (String(row.creatorRole || '').toUpperCase() === 'SUBCABO') {
+    return { cabo: String(row.caboName || '').trim(), subcabo: String(row.creatorName || '').trim() };
+  }
+  return { cabo: String(row.creatorName || '').trim(), subcabo: '' };
 }
 
 function compareNames(a, b) {
   return String(a || '').localeCompare(String(b || ''), 'pt-BR');
 }
 
-function buildElectionReport({ candidateName, year, office, turn, filters = {}, comparisonRows, rows = [] }) {
+function buildElectionReport({ candidateName, year, office, turn, filters = {}, comparisonRows, rows = [], teamSectionRows }) {
   const sourceRows = comparisonRows || rows;
   const teams = new Map();
   const sections = new Map();
@@ -46,6 +55,22 @@ function buildElectionReport({ candidateName, year, office, turn, filters = {}, 
     sections.set(key, section);
   }
 
+  if (teamSectionRows) {
+    const selectedSectionKeys = new Set(sections.keys());
+    for (const section of sections.values()) {
+      section.cadastrados = 0;
+      section.teams.clear();
+    }
+    for (const row of teamSectionRows) {
+      const key = sectionKey(row);
+      if (!selectedSectionKeys.has(key)) continue;
+      const section = sections.get(key);
+      const team = teamFromSectionRow(row);
+      section.cadastrados += Number(row.prometidos) || 0;
+      section.teams.set(teamKey(team.cabo, team.subcabo), team);
+    }
+  }
+
   const sectionDetails = [...sections.values()]
     .map((section) => {
       const confirmados = Math.min(section.cadastrados, section.apurado);
@@ -61,10 +86,14 @@ function buildElectionReport({ candidateName, year, office, turn, filters = {}, 
         teams: [...sectionTeams.values()].sort((a, b) => (
           compareNames(a.cabo, b.cabo) || compareNames(a.subcabo, b.subcabo)
         )),
+        compartilhada: sectionTeams.size > 1,
+        compartilhadaEntreCabos: new Set([...sectionTeams.values()].map((team) => team.cabo.toLocaleUpperCase('pt-BR'))).size > 1,
       };
     })
     .sort((a, b) => (
-      compareNames(a.city, b.city)
+      b.faltantes - a.faltantes
+      || b.cadastrados - a.cadastrados
+      || compareNames(a.city, b.city)
       || Number(a.zona) - Number(b.zona)
       || Number(a.secao) - Number(b.secao)
     ));
@@ -72,6 +101,10 @@ function buildElectionReport({ candidateName, year, office, turn, filters = {}, 
   const missingKeys = new Set(sectionDetails
     .filter((section) => section.faltantes > 0)
     .map((section) => sectionKey(section)));
+  const caboTotals = new Map();
+  for (const team of teams.values()) {
+    caboTotals.set(team.cabo, (caboTotals.get(team.cabo) || 0) + team.cadastrados);
+  }
   const summary = [...teams.values()]
     .map(({ sections: teamSections, ...team }) => ({
       ...team,
@@ -79,8 +112,10 @@ function buildElectionReport({ candidateName, year, office, turn, filters = {}, 
       secoesComFaltantes: [...teamSections].filter((key) => missingKeys.has(key)).length,
     }))
     .sort((a, b) => (
-      compareNames(a.cabo, b.cabo)
+      (caboTotals.get(b.cabo) || 0) - (caboTotals.get(a.cabo) || 0)
+      || b.cadastrados - a.cadastrados
       || (a.subcabo ? 0 : 1) - (b.subcabo ? 0 : 1)
+      || compareNames(a.cabo, b.cabo)
       || compareNames(a.subcabo, b.subcabo)
     ));
 

@@ -19,7 +19,7 @@ function teamOf(voter) {
 }
 
 function sectionOf(row) {
-  return `${normalized(row.city)}|${numberText(row.zone, 2)}|${numberText(row.section, 4)}`;
+  return `${normalized(row.city)}|${numberText(row.zone ?? row.zona, 2)}|${numberText(row.section ?? row.secao, 4)}`;
 }
 
 function compareText(a, b) {
@@ -30,12 +30,15 @@ function percentage(value, total) {
   return total ? Math.round((value / total) * 1000) / 10 : 0;
 }
 
-function byVotes(a, b) {
-  return b.votos - a.votos
-    || b.prometidos - a.prometidos
+function byPromised(a, b) {
+  return b.prometidos - a.prometidos
     || compareText(a.cabo, b.cabo)
     || compareText(a.subcabo, b.subcabo)
     || compareText(a.city, b.city);
+}
+
+function byMissingThenPromised(a, b) {
+  return b.faltantes - a.faltantes || byPromised(a, b);
 }
 
 function summarize(sections) {
@@ -71,37 +74,133 @@ function createSection(location, apurado) {
   return { ...location, prometidos: 0, apurado, eleitores: [] };
 }
 
-function finishGroup(group) {
+function finishGroup(group, auditBySection) {
   const summary = summarize(group.sections);
+  const bairros = new Map();
+  for (const [key, section] of group.neighborhoodSections) {
+    const audit = auditBySection.get(sectionOf(section));
+    const detail = {
+      ...finishSection(section),
+      prometidosGrupo: section.prometidos,
+      prometidosSecao: audit?.prometidos ?? section.prometidos,
+      apurado: audit?.apurado ?? section.apurado,
+      votos: audit?.votos ?? Math.min(section.prometidos, section.apurado),
+      faltantes: audit?.faltantes ?? Math.max(section.prometidos - section.apurado, 0),
+      percentualVotos: audit?.percentualVotos ?? percentage(Math.min(section.prometidos, section.apurado), section.prometidos),
+      percentualFaltantes: audit?.percentualFaltantes ?? percentage(Math.max(section.prometidos - section.apurado, 0), section.prometidos),
+      equipes: audit?.teams || [],
+      compartilhada: Boolean(audit?.teams?.length > 1),
+      compartilhadaEntreCabos: Boolean(audit?.cabos?.length > 1),
+      bairrosDaSecao: audit?.bairros || [section.bairro],
+    };
+    const bairro = bairros.get(normalized(section.bairro)) || {
+      bairro: section.bairro,
+      prometidos: 0,
+      secoes: [],
+    };
+    bairro.prometidos += section.prometidos;
+    bairro.secoes.push(detail);
+    bairros.set(normalized(section.bairro), bairro);
+  }
   return {
     cabo: group.cabo,
     subcabo: group.subcabo,
     city: group.city,
     ...summary,
-    secoes: [...group.sections.values()].map(finishSection).sort(byVotes),
+    bairros: [...bairros.values()]
+      .map((bairro) => ({ ...bairro, secoes: bairro.secoes.sort(byPromised) }))
+      .sort(byPromised),
+    secoes: [...group.sections.values()].map(finishSection).sort(byPromised),
   };
 }
 
-function finishCabo(cabo) {
+function finishCabo(cabo, auditBySection) {
   const subcabos = [...cabo.subcabos.values()]
-    .map((subcabo) => ({
-      cabo: cabo.cabo,
-      subcabo: subcabo.subcabo || 'Cadastro direto',
-      cidades: [...subcabo.cities].sort(compareText),
-      localidades: [...subcabo.localities].sort(compareText),
-      ...summarize(subcabo.sections),
-    }))
-    .sort(byVotes);
+    .map((subcabo) => {
+      const exclusiveSections = new Map([...subcabo.sections].filter(([key]) => (auditBySection.get(key)?.teams.length || 0) <= 1));
+      const totalSummary = summarize(subcabo.sections);
+      const exclusiveSummary = summarize(exclusiveSections);
+      return {
+        cabo: cabo.cabo,
+        subcabo: subcabo.subcabo || 'Cadastro direto',
+        cidades: [...subcabo.cities].sort(compareText),
+        localidades: [...subcabo.localities].sort(compareText),
+        ...exclusiveSummary,
+        prometidos: totalSummary.prometidos,
+        prometidosExclusivos: exclusiveSummary.prometidos,
+        secoesCompartilhadas: [...subcabo.sections.keys()].filter((key) => (auditBySection.get(key)?.teams.length || 0) > 1).length,
+      };
+    })
+    .sort(byPromised);
+  const exclusiveSections = new Map([...cabo.sections].filter(([key]) => (auditBySection.get(key)?.cabos.length || 0) <= 1));
+  const exclusiveSummary = summarize(exclusiveSections);
   return {
     cabo: cabo.cabo,
     subcabos,
     cidades: [...cabo.cities].sort(compareText),
     localidades: [...cabo.localities].sort(compareText),
-    ...summarize(cabo.sections),
+    prometidos: summarize(cabo.sections).prometidos,
+    apurado: exclusiveSummary.apurado,
+    votos: exclusiveSummary.votos,
+    faltantes: exclusiveSummary.faltantes,
+    percentualVotos: exclusiveSummary.percentualVotos,
+    percentualFaltantes: exclusiveSummary.percentualFaltantes,
+    prometidosExclusivos: exclusiveSummary.prometidos,
+    prometidosCompartilhados: [...cabo.sections].reduce((sum, [key, section]) => (
+      sum + ((auditBySection.get(key)?.cabos.length || 0) > 1 ? section.prometidos : 0)
+    ), 0),
+    secoesCompartilhadas: [...cabo.sections.keys()].filter((key) => (auditBySection.get(key)?.cabos.length || 0) > 1).length,
+    secoes: [...cabo.sections].map(([key, section]) => ({
+      ...finishSection(section),
+      compartilhadaEntreCabos: Boolean(auditBySection.get(key)?.cabos.length > 1),
+      equipes: auditBySection.get(key)?.teams || [],
+    })).sort(byPromised),
   };
 }
 
-function buildElectionIntelligenceReport({ voters = [], tseRows = [], candidateName = '', filters = {}, year, office, turn }) {
+function buildHierarchy(groups) {
+  const cabos = new Map();
+  for (const group of groups) {
+    const caboKey = normalized(group.cabo) || 'CADASTRO DIRETO';
+    const cabo = cabos.get(caboKey) || { cabo: group.cabo || 'Cadastro direto', prometidos: 0, subcabos: new Map() };
+    cabo.prometidos += group.prometidos;
+    const subcaboKey = normalized(group.subcabo) || 'CADASTRO DIRETO';
+    const subcabo = cabo.subcabos.get(subcaboKey) || { subcabo: group.subcabo || 'Cadastro direto', prometidos: 0, cidades: new Map() };
+    subcabo.prometidos += group.prometidos;
+    const cityKey = normalized(group.city);
+    const city = subcabo.cidades.get(cityKey) || { city: group.city, prometidos: 0, bairros: new Map() };
+    city.prometidos += group.prometidos;
+    for (const bairro of group.bairros) {
+      const bairroKey = normalized(bairro.bairro);
+      const neighborhood = city.bairros.get(bairroKey) || { bairro: bairro.bairro, prometidos: 0, secoes: [] };
+      neighborhood.prometidos += bairro.prometidos;
+      neighborhood.secoes.push(...bairro.secoes);
+      city.bairros.set(bairroKey, neighborhood);
+    }
+    subcabo.cidades.set(cityKey, city);
+    cabo.subcabos.set(subcaboKey, subcabo);
+    cabos.set(caboKey, cabo);
+  }
+
+  const byCount = (a, b) => b.prometidos - a.prometidos || compareText(a.cabo || a.subcabo || a.city || a.bairro, b.cabo || b.subcabo || b.city || b.bairro);
+  return [...cabos.values()].map((cabo) => ({
+    ...cabo,
+    subcabos: [...cabo.subcabos.values()].map((subcabo) => ({
+      ...subcabo,
+      cidades: [...subcabo.cidades.values()].map((city) => ({
+        ...city,
+        bairros: [...city.bairros.values()].map((bairro) => ({
+          ...bairro,
+          secoesComFaltas: bairro.secoes.filter((section) => section.faltantes > 0).sort(byMissingThenPromised),
+          demaisSecoes: bairro.secoes.filter((section) => section.faltantes <= 0).sort(byPromised),
+          secoes: bairro.secoes.sort(byPromised),
+        })).sort(byCount),
+      })).sort(byCount),
+    })).sort(byCount),
+  })).sort(byCount);
+}
+
+function buildElectionIntelligenceReport({ voters = [], teamSectionRows, tseRows = [], candidateName = '', filters = {}, year, office, turn }) {
   const official = new Map();
   for (const row of tseRows) {
     const key = sectionOf(row);
@@ -138,12 +237,18 @@ function buildElectionIntelligenceReport({ voters = [], tseRows = [], candidateN
       subcabo: team.subcabo,
       city,
       sections: new Map(),
+      neighborhoodSections: new Map(),
     };
     const groupSection = group.sections.get(sectionKey) || createSection(location, apurado);
     groupSection.prometidos += 1;
     groupSection.apurado = Math.max(groupSection.apurado, apurado);
     groupSection.eleitores.push(text(voter.name) || 'Eleitor sem nome');
     group.sections.set(sectionKey, groupSection);
+    const neighborhoodKey = `${sectionKey}|${normalized(bairro)}`;
+    const neighborhoodSection = group.neighborhoodSections.get(neighborhoodKey) || createSection(location, apurado);
+    neighborhoodSection.prometidos += 1;
+    neighborhoodSection.eleitores.push(text(voter.name) || 'Eleitor sem nome');
+    group.neighborhoodSections.set(neighborhoodKey, neighborhoodSection);
     groups.set(groupKey, group);
 
     const caboKey = normalized(team.cabo);
@@ -196,20 +301,32 @@ function buildElectionIntelligenceReport({ voters = [], tseRows = [], candidateN
     }
   }
 
-  const detailed = [...groups.values()].map(finishGroup).sort(byVotes);
-  const caboRanking = [...cabos.values()].map(finishCabo).sort(byVotes);
-  const subcaboRanking = [...subcabos.values()].map((subcabo) => ({
-    cabo: subcabo.cabo,
-    subcabo: subcabo.subcabo || 'Cadastro direto',
-    cidades: [...subcabo.cities].sort(compareText),
-    localidades: [...subcabo.localities].sort(compareText),
-    ...summarize(subcabo.sections),
-  })).sort(byVotes);
+  if (teamSectionRows) {
+    const selectedSections = new Set(sectionAudits.keys());
+    for (const audit of sectionAudits.values()) {
+      audit.prometidos = 0;
+      audit.teams.clear();
+      audit.bairros.clear();
+    }
+    for (const row of teamSectionRows) {
+      const key = sectionOf(row);
+      if (!selectedSections.has(key)) continue;
+      const audit = sectionAudits.get(key);
+      const team = teamOf(row);
+      audit.prometidos += Number(row.prometidos || 0);
+      audit.bairros.add(text(row.neighborhood) || 'Bairro não informado');
+      audit.teams.set(`${normalized(team.cabo)}\u0000${normalized(team.subcabo)}`, team);
+    }
+  }
 
   const sectionAuditRows = [...sectionAudits.values()]
     .map((section) => {
       const votos = Math.min(section.prometidos, section.apurado);
       const faltantes = Math.max(section.prometidos - section.apurado, 0);
+      const teams = [...section.teams.values()].sort((a, b) => (
+        compareText(a.cabo, b.cabo) || compareText(a.subcabo, b.subcabo)
+      ));
+      const cabos = [...new Set(teams.map((team) => normalized(team.cabo)))];
       return {
         city: section.city,
         bairros: [...section.bairros].sort(compareText),
@@ -221,16 +338,34 @@ function buildElectionIntelligenceReport({ voters = [], tseRows = [], candidateN
         faltantes,
         percentualVotos: percentage(votos, section.prometidos),
         percentualFaltantes: percentage(faltantes, section.prometidos),
-        teams: [...section.teams.values()].sort((a, b) => (
-          compareText(a.cabo, b.cabo) || compareText(a.subcabo, b.subcabo)
-        )),
+        teams,
+        cabos,
+        compartilhada: teams.length > 1,
+        compartilhadaEntreCabos: cabos.length > 1,
       };
     })
-    .sort((a, b) => (
-      compareText(a.city, b.city)
-      || Number(a.zona) - Number(b.zona)
-      || Number(a.secao) - Number(b.secao)
-    ));
+    .sort((a, b) => compareText(a.city, b.city) || Number(a.zona) - Number(b.zona) || Number(a.secao) - Number(b.secao));
+  const auditBySection = new Map(sectionAuditRows.map((section) => [sectionOf(section), section]));
+
+  const detailed = [...groups.values()].map((group) => finishGroup(group, auditBySection)).sort(byPromised);
+  const hierarchy = buildHierarchy(detailed);
+  const selectedPrometidos = detailed.reduce((sum, group) => sum + group.prometidos, 0);
+  const caboRanking = [...cabos.values()].map((cabo) => finishCabo(cabo, auditBySection)).sort(byPromised);
+  const subcaboRanking = [...subcabos.values()].map((subcabo) => {
+    const exclusiveSections = new Map([...subcabo.sections].filter(([key]) => (auditBySection.get(key)?.teams.length || 0) <= 1));
+    const totalSummary = summarize(subcabo.sections);
+    const exclusiveSummary = summarize(exclusiveSections);
+    return {
+      cabo: subcabo.cabo,
+      subcabo: subcabo.subcabo || 'Cadastro direto',
+      cidades: [...subcabo.cities].sort(compareText),
+      localidades: [...subcabo.localities].sort(compareText),
+      ...exclusiveSummary,
+      prometidos: totalSummary.prometidos,
+      prometidosExclusivos: exclusiveSummary.prometidos,
+      secoesCompartilhadas: subcabo.sections.size - exclusiveSections.size,
+    };
+  }).sort(byPromised);
   const totals = sectionAuditRows.reduce((total, section) => ({
     prometidos: total.prometidos + section.prometidos,
     apurado: total.apurado + section.apurado,
@@ -239,10 +374,11 @@ function buildElectionIntelligenceReport({ voters = [], tseRows = [], candidateN
   }), { prometidos: 0, apurado: 0, votos: 0, faltantes: 0 });
   totals.percentualVotos = percentage(totals.votos, totals.prometidos);
   totals.percentualFaltantes = percentage(totals.faltantes, totals.prometidos);
+  const sharedSections = sectionAuditRows.filter((section) => section.compartilhadaEntreCabos);
 
   return {
-    candidateName, year, office, turn, filters, detailed,
-    cabos: caboRanking, subcabos: subcaboRanking,
+    candidateName, year, office, turn, filters, detailed, hierarchy, selectedPrometidos,
+    cabos: caboRanking, subcabos: subcaboRanking, sharedSections,
     sectionAudits: sectionAuditRows, totals,
   };
 }
