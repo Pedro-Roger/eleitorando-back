@@ -689,6 +689,7 @@ function drawIntelligenceHeader(doc, report, title, reportType) {
     .text(`Tipo: ${reportType} | ${formatReportFilters(report.filters)}`, { width })
     .text(`Gerado em ${new Date().toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' })}`, { width });
   doc.moveDown(0.45);
+  doc.x = doc.page.margins.left;
 }
 
 function drawMetricCards(doc, metrics, options = {}) {
@@ -791,15 +792,8 @@ function sendMissingReportPdf(res, report, meta) {
 
   const usable = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   drawIntelligenceHeader(doc, report, 'RELATÓRIO GERAL - AUDITORIA POR EQUIPE E SEÇÃO', 'Relatório geral de votos prometidos e apuração TSE');
-  drawMetricCards(doc, [
-    { value: report.totalCadastrados, label: 'VOTOS PROMETIDOS' },
-    { value: report.totalApurado, label: 'VOTOS TSE (SEÇÕES ÚNICAS)' },
-    { value: report.totalConfirmados, label: 'CONFIRMADOS' },
-    { value: report.totalFaltantes, label: 'VOTOS FALTANTES', color: '#B74343', background: '#FFF1F0' },
-    { value: formatPercent(report.totalCadastrados ? report.totalConfirmados * 100 / report.totalCadastrados : 0), label: 'COBERTURA NUMÉRICA' },
-  ], { height: 48, fontSize: 15 });
   doc.font('Helvetica').fontSize(8.5).fillColor('#52677A')
-    .text('Critério: faltantes = máximo(prometidos - apurado, 0); confirmados = mínimo(prometidos, apurado). Votos TSE são contados uma vez por cidade, zona e seção.');
+    .text('Os detalhes mostram os cadastros e a apuração por seção. O TSE informa o total da seção, não os votos individuais de cada equipe; seções compartilhadas são contabilizadas uma única vez.');
   doc.moveDown(0.45);
 
   // Resumo por cabo e subcabo
@@ -844,7 +838,7 @@ function sendMissingReportPdf(res, report, meta) {
   doc.end();
 }
 
-function sendMissingVotersPdf(res, report, voters, auditReport) {
+function sendMissingVotersPdf(res, report, voters) {
   const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36, bufferPages: true });
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', 'attachment; filename="relatorio-eleitores-secoes-faltantes.pdf"');
@@ -852,14 +846,8 @@ function sendMissingVotersPdf(res, report, voters, auditReport) {
 
   const usable = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   drawIntelligenceHeader(doc, report, 'ELEITORES CADASTRADOS NAS SEÇÕES COM FALTA', 'Listagem nominal das seções abaixo da meta');
-  drawMetricCards(doc, [
-    { value: auditReport.totalCadastrados, label: 'VOTOS PROMETIDOS' },
-    { value: auditReport.totalApurado, label: 'VOTOS TSE (SEÇÕES ÚNICAS)' },
-    { value: auditReport.totalFaltantes, label: 'FALTANTES', color: '#B74343', background: '#FFF1F0' },
-    { value: formatPercent(auditReport.totalCadastrados ? auditReport.totalConfirmados * 100 / auditReport.totalCadastrados : 0), label: 'COBERTURA NUMÉRICA' },
-  ], { height: 46, fontSize: 14 });
   doc.font('Helvetica').fontSize(9).fillColor('#475569')
-    .text(`${voters.length} eleitor(es). A diferença é da seção; este relatório não identifica individualmente quem compareceu.`);
+    .text(`${voters.length} eleitor(es) cadastrado(s) em seções com diferença positiva. A falta é calculada no total da seção; este relatório não identifica individualmente quem compareceu.`);
   doc.moveDown(0.35);
 
   const widths = [usable * 0.16, usable * 0.09, usable * 0.10, usable * 0.10, usable * 0.10, usable * 0.10, usable * 0.06, usable * 0.06, usable * 0.08, usable * 0.15];
@@ -1177,8 +1165,8 @@ router.get('/relatorio-faltantes/eleitores', requireRole('ADMIN'), async (req, r
 });
 
 router.get('/relatorio-faltantes/eleitores/pdf', requireRole('ADMIN'), async (req, res) => {
-  const { comparison, voters, auditReport } = await loadMissingVoterReport(req);
-  sendMissingVotersPdf(res, comparison, voters, auditReport);
+  const { comparison, voters } = await loadMissingVoterReport(req);
+  sendMissingVotersPdf(res, comparison, voters);
 });
 
 router.get('/relatorio-faltantes/pdf', requireRole('ADMIN'), async (req, res) => {
