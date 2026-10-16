@@ -8,6 +8,7 @@ const { requireRole } = require('../middleware/auth');
 const { buildComparisonRows } = require('../lib/electionComparison');
 const { buildElectionReport } = require('../lib/electionReport');
 const { buildElectionIntelligenceReport, buildCaboSummaryModel } = require('../lib/electionIntelligenceReport');
+const { buildScopedElectionReports } = require('../lib/scopedElectionReports');
 const { buildMissingVoterRows } = require('../lib/missingVoterReport');
 const { addPdfPageNumbers } = require('../lib/pdfPageNumbers');
 
@@ -673,7 +674,7 @@ function compactCityNames(values = []) {
 
 function formatReportFilters(filters = {}) {
   const labels = [
-    ['Cabo', filters.cabo], ['Subcabo', filters.subcabo], ['Cidade', filters.city],
+    ['Cabo', filters.cabo], ['Subcabo', filters.subcabo], ['Cidade', filters.city], ['Bairro', filters.neighborhood],
     ['Zona', filters.zone], ['Seção', filters.section],
   ].filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
     .map(([label, value]) => `${label}: ${compactPdfValue(value)}`);
@@ -1176,16 +1177,155 @@ router.get('/relatorio-faltantes/pdf', requireRole('ADMIN'), async (req, res) =>
   sendMissingReportPdf(res, report, comparison);
 });
 
+async function loadScopedElectionReport(req) {
+  let { year, office, turn } = queryBase(req);
+  const candidateName = String(req.query.candidateName || '').trim();
+  if (!candidateName) {
+    const error = new Error('Parâmetro candidateName é obrigatório.');
+    error.status = 400;
+    throw error;
+  }
+  if (!req.query.office || !req.query.year) {
+    const found = await knex('election_results')
+      .whereRaw('UPPER(TRIM("candidateName")) = UPPER(?)', [candidateName])
+      .orderBy('year', 'desc').first('office', 'year');
+    if (found) {
+      if (!req.query.office) office = found.office;
+      if (!req.query.year) year = found.year;
+    }
+  }
+  const caboId = Number(req.query.caboId) || 0;
+  const subcaboId = Number(req.query.subcaboId) || 0;
+  const city = String(req.query.city || '').trim();
+  const neighborhood = String(req.query.neighborhood || '').trim();
+  const zone = String(req.query.zone || '').trim();
+  const section = String(req.query.section || '').trim();
+  let voterQuery = knex('voters as v')
+    .leftJoin('users as creator', 'v.createdById', 'creator.id')
+    .leftJoin('users as cabo', 'creator.parentId', 'cabo.id')
+    .whereNotNull('v.zone').whereNotNull('v.section');
+  if (subcaboId) {
+    voterQuery = voterQuery.where('v.createdById', subcaboId);
+    if (caboId) voterQuery = voterQuery.where('creator.parentId', caboId);
+  } else if (caboId) {
+    const subIds = await knex('users').where('parentId', caboId).select('id');
+    voterQuery = voterQuery.whereIn('v.createdById', [caboId, ...subIds.map((row) => row.id)]);
+  }
+  if (city) voterQuery = voterQuery.whereRaw('UPPER(TRIM(v.city)) = UPPER(?)', [city]);
+  if (neighborhood) voterQuery = voterQuery.whereRaw('UPPER(TRIM(v.neighborhood)) = UPPER(?)', [neighborhood]);
+  if (zone) voterQuery = /^\d+$/.test(zone)
+    ? voterQuery.whereRaw("CASE WHEN TRIM(v.zone) ~ '^[0-9]+$' THEN CAST(TRIM(v.zone) AS INTEGER) END = ?", [Number(zone)])
+    : voterQuery.whereRaw('1 = 0');
+  if (section) voterQuery = /^\d+$/.test(section)
+    ? voterQuery.whereRaw("CASE WHEN TRIM(v.section) ~ '^[0-9]+$' THEN CAST(TRIM(v.section) AS INTEGER) END = ?", [Number(section)])
+    : voterQuery.whereRaw('1 = 0');
+  const voters = await voterQuery.select(
+    'v.name', 'v.city', 'v.neighborhood', 'v.zone', 'v.section',
+    'creator.id as creatorId', 'creator.name as creatorName', 'creator.role as creatorRole',
+    'cabo.id as caboId', 'cabo.name as caboName'
+  );
+  let tseQuery = knex('election_results')
+    .where({ year, office, turn, source: 'TSE' })
+    .whereRaw('UPPER(TRIM("candidateName")) = UPPER(?)', [candidateName]);
+  if (city) tseQuery = tseQuery.whereRaw('UPPER(TRIM(city)) = UPPER(?)', [city]);
+  if (zone && /^\d+$/.test(zone)) tseQuery = tseQuery.whereRaw("CASE WHEN TRIM(zone) ~ '^[0-9]+$' THEN CAST(TRIM(zone) AS INTEGER) END = ?", [Number(zone)]);
+  if (section && /^\d+$/.test(section)) tseQuery = tseQuery.whereRaw("CASE WHEN TRIM(section) ~ '^[0-9]+$' THEN CAST(TRIM(section) AS INTEGER) END = ?", [Number(section)]);
+  const tseRows = voters.length
+    ? await tseQuery.select('city', 'zone', 'section').sum('votes as total').groupBy('city', 'zone', 'section')
+    : [];
+  return buildScopedElectionReports({
+    voters, tseRows, candidateName, year, office, turn,
+    filters: { ...await resolveTeamFilterLabels(caboId, subcaboId), city, neighborhood, zone, section },
+  });
+}
+
+function sendScopedMissingPdf(res, report) {
+  const doc = new PDFDocument({ size: 'A4', margin: 40, bufferPages: true });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'attachment; filename="possiveis-nao-votantes.pdf"');
+  doc.pipe(res);
+  drawIntelligenceHeader(doc, report, 'POSSÍVEIS NÃO VOTANTES', 'Rastreio de possibilidades: promessas x resultado da seção');
+  doc.font('Helvetica').fontSize(10.5).fillColor('#334155')
+    .text('Este rastreio compara as promessas cadastradas pelo cabo e seus subcabos com o resultado oficial da seção. Os nomes indicam possibilidades para acompanhamento, sem confirmação individual de voto.');
+  doc.moveDown(0.7);
+  for (const section of report.missingSections) {
+    if (doc.y > doc.page.height - 175) doc.addPage();
+    const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const x = doc.page.margins.left;
+    const top = doc.y;
+    const caboLabel = `CABO: ${section.cabo}`;
+    const locationLabel = `${section.city}  |  Zona ${section.zona}  |  Seção ${section.secao}`;
+    const caboHeight = doc.font('Helvetica-Bold').fontSize(14).heightOfString(caboLabel, { width: width - 24 });
+    const locationHeight = doc.font('Helvetica').fontSize(11).heightOfString(locationLabel, { width: width - 24 });
+    const bandHeight = Math.max(60, caboHeight + locationHeight + 22);
+    doc.roundedRect(x, top, width, bandHeight, 5).fill('#18344B');
+    doc.font('Helvetica-Bold').fontSize(14).fillColor('#FFFFFF')
+      .text(caboLabel, x + 12, top + 9, { width: width - 24 });
+    doc.font('Helvetica').fontSize(11).fillColor('#FFFFFF')
+      .text(locationLabel, x + 12, top + 11 + caboHeight, { width: width - 24 });
+    doc.y = top + bandHeight + 13;
+    doc.x = x;
+    doc.font('Helvetica-Bold').fontSize(11.5).fillColor('#18344B')
+      .text(`Prometeram ${formatNumber(section.prometidos)}   ·   Resultado na seção ${formatNumber(section.apuradoTseNaSecao)}`)
+      .text(`Possivelmente votaram ${formatNumber(section.possivelmenteVotaram)}   ·   Possíveis faltantes ${formatNumber(section.faltantes)} (${formatPercent(section.percentualFaltantes)})`);
+    doc.moveDown(0.5);
+    doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#334155').text('PESSOAS CADASTRADAS NESTA SEÇÃO');
+    doc.moveDown(0.15);
+    for (const person of section.pessoas) {
+      if (doc.y > doc.page.height - 82) doc.addPage();
+      doc.font('Helvetica-Bold').fontSize(12).fillColor('#191B23').text(person.name, { width });
+      doc.font('Helvetica').fontSize(10.5).fillColor('#334155')
+        .text(`${person.subcabo ? `Subcabo: ${person.subcabo}` : 'Cadastro direto'}  |  ${person.city}  |  ${person.bairro}  |  Zona ${person.zona}  |  Seção ${person.secao}`, { width });
+      doc.moveDown(0.35);
+    }
+    doc.moveDown(0.75);
+  }
+  if (!report.missingSections.length) doc.text('Nenhuma seção com diferença numérica nos filtros escolhidos.');
+  addPdfPageNumbers(doc);
+  doc.end();
+}
+
+function sendScopedSummaryPdf(res, report) {
+  const doc = new PDFDocument({ size: 'A4', margin: 40, bufferPages: true });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'attachment; filename="resumo-por-cabo.pdf"');
+  doc.pipe(res);
+  drawIntelligenceHeader(doc, report, 'RESUMO POR CABO E SUBCABO', 'Cadastros do maior para o menor');
+  for (const cabo of report.cabos) {
+    drawReportBand(doc, `CABO: ${cabo.name} | ${formatNumber(cabo.prometidos)} PROMESSAS`, '#18344B');
+    doc.font('Helvetica').fontSize(11).fillColor('#334155')
+      .text(`${formatNumber(cabo.secoes)} seções | ${formatNumber(cabo.secoesComFaltantes)} com diferença numérica`);
+    const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    drawTableWithBackground(doc, ['Subcabo', 'Promessas'], cabo.subcabos.map((sub) => [sub.name, formatNumber(sub.prometidos)]), [width * .7, width * .3], { headerFontSize: 10.5, bodyFontSize: 11, padding: 6 });
+    for (const city of cabo.cidades) {
+      doc.font('Helvetica-Bold').fontSize(12).fillColor('#18344B')
+        .text(`CIDADE: ${city.name} | ${formatNumber(city.prometidos)} PROMESSAS`);
+      for (const subcabo of city.subcabos) {
+        doc.font('Helvetica-Bold').fontSize(11).fillColor('#334155')
+          .text(`  SUBCABO: ${subcabo.name} | ${formatNumber(subcabo.prometidos)} PROMESSAS`);
+        for (const zone of subcabo.zonas) {
+          doc.font('Helvetica').fontSize(10.5).fillColor('#334155')
+            .text(`    ZONA ${zone.name} (${formatNumber(zone.prometidos)})`);
+          doc.text(`      ${zone.secoes.map((section) => `Seção ${section.name}: ${formatNumber(section.prometidos)}`).join('  |  ')}`);
+        }
+      }
+      doc.moveDown(0.35);
+    }
+    doc.moveDown(0.5);
+  }
+  if (!report.cabos.length) doc.text('Nenhum cadastro encontrado para os filtros escolhidos.');
+  addPdfPageNumbers(doc);
+  doc.end();
+}
+
+router.get('/inteligencia-eleitoral', requireRole('ADMIN'), async (req, res) => {
+  res.json(await loadScopedElectionReport(req));
+});
 router.get('/inteligencia-eleitoral/eleitores/pdf', requireRole('ADMIN'), async (req, res) => {
-  sendElectionIntelligencePdf(res, await loadElectionIntelligenceReport(req));
+  sendScopedMissingPdf(res, await loadScopedElectionReport(req));
 });
-
 router.get('/inteligencia-eleitoral/resumo-cabos/pdf', requireRole('ADMIN'), async (req, res) => {
-  sendCaboSummaryPdf(res, await loadElectionIntelligenceReport(req));
-});
-
-router.get('/inteligencia-eleitoral/cabos/pdf', requireRole('ADMIN'), async (req, res) => {
-  sendCaboRankingPdf(res, await loadElectionIntelligenceReport(req));
+  sendScopedSummaryPdf(res, await loadScopedElectionReport(req));
 });
 
 
