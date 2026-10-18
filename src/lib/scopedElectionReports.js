@@ -1,3 +1,5 @@
+const { sectionDelivery, markShared, sumDeliveries, coverage } = require('./electionReportRules');
+
 function label(value, fallback = '') {
   return String(value ?? '').trim() || fallback;
 }
@@ -34,6 +36,11 @@ function locationHierarchy(sections) {
       const subsection = zone.secoes.get(section.secao) || {
         name: section.secao,
         prometidos: 0,
+        entregue: section.entregue,
+        faltante: section.faltante,
+        excedente: section.excedente,
+        status: section.status,
+        compartilhada: section.compartilhada,
         totalPrometidoNaSecao: section.prometidos,
         apuradoTseNaSecao: section.apuradoTseNaSecao,
         apuracaoDisponivel: section.apuracaoDisponivel,
@@ -94,16 +101,21 @@ function buildScopedElectionReports({ voters = [], tseRows = [], candidateName =
 
   const allSections = [...sections.values()].map((section) => {
     const prometidos = section.pessoas.length;
-    const possivelmenteVotaram = section.apuracaoDisponivel ? Math.min(prometidos, section.apuradoTseNaSecao) : null;
-    const faltantes = section.apuracaoDisponivel ? prometidos - possivelmenteVotaram : null;
+    const delivery = sectionDelivery({
+      prometidos,
+      tse: section.apuracaoDisponivel ? section.apuradoTseNaSecao : null,
+    });
     const subcaboCounts = new Map();
     for (const person of section.pessoas) {
       const subKey = person.subcaboId ?? 'CADASTRO DIRETO';
       subcaboCounts.set(subKey, (subcaboCounts.get(subKey) || 0) + 1);
     }
     return {
-      ...section, prometidos, possivelmenteVotaram, faltantes,
-      percentualFaltantes: section.apuracaoDisponivel ? Math.round((faltantes / prometidos) * 1000) / 10 : null,
+      ...section,
+      ...delivery,
+      possivelmenteVotaram: delivery.entregue,
+      faltantes: delivery.faltante,
+      percentualFaltantes: delivery.faltante === null ? null : (prometidos ? Math.round((delivery.faltante / prometidos) * 1000) / 10 : 0),
       pessoas: section.pessoas.sort((a, b) => (
         (subcaboCounts.get(b.subcaboId ?? 'CADASTRO DIRETO') || 0) - (subcaboCounts.get(a.subcaboId ?? 'CADASTRO DIRETO') || 0)
         || a.subcabo.localeCompare(b.subcabo, 'pt-BR') || a.name.localeCompare(b.name, 'pt-BR')
@@ -111,29 +123,42 @@ function buildScopedElectionReports({ voters = [], tseRows = [], candidateName =
     };
   });
 
-  const cabos = new Map();
+  const sectionsByCabo = new Map();
   for (const section of allSections) {
     const caboKey = section.caboId ?? key(section.cabo);
-    const cabo = cabos.get(caboKey) || { id: caboKey, name: section.cabo, prometidos: 0, sections: [], subcabos: new Map() };
-    cabo.prometidos += section.prometidos;
-    cabo.sections.push(section);
-    for (const person of section.pessoas) {
-      const subKey = person.subcaboId ?? 'CADASTRO DIRETO';
-      const subcabo = cabo.subcabos.get(subKey) || { id: subKey, name: person.subcabo || 'Cadastro direto', prometidos: 0 };
-      subcabo.prometidos += 1;
-      cabo.subcabos.set(subKey, subcabo);
+    const caboSections = sectionsByCabo.get(caboKey) || [];
+    caboSections.push(section);
+    sectionsByCabo.set(caboKey, caboSections);
+  }
+
+  const cabos = new Map();
+  for (const [caboKey, sectionsDoCabo] of sectionsByCabo) {
+    const markedSections = markShared(sectionsDoCabo, (person) => person.subcaboId ?? 'CADASTRO DIRETO');
+    const cabo = { id: caboKey, name: sectionsDoCabo[0].cabo, sections: markedSections, subcabos: new Map() };
+    for (const section of markedSections) {
+      for (const person of section.pessoas) {
+        const subKey = person.subcaboId ?? 'CADASTRO DIRETO';
+        const subcabo = cabo.subcabos.get(subKey) || { id: subKey, name: person.subcabo || 'Cadastro direto', prometidos: 0 };
+        subcabo.prometidos += 1;
+        cabo.subcabos.set(subKey, subcabo);
+      }
     }
     cabos.set(caboKey, cabo);
   }
-  const rankedCabos = [...cabos.values()].map((cabo) => ({
-    id: cabo.id,
-    name: cabo.name,
-    prometidos: cabo.prometidos,
-    secoes: cabo.sections.length,
-    secoesComFaltantes: cabo.sections.filter((section) => section.faltantes > 0).length,
-    subcabos: [...cabo.subcabos.values()].sort(descending),
-    cidades: locationHierarchy(cabo.sections),
-  })).sort(descending);
+  const rankedCabos = [...cabos.values()].map((cabo) => {
+    const totals = sumDeliveries(cabo.sections);
+    return {
+      id: cabo.id,
+      name: cabo.name,
+      ...totals,
+      compartilhadas: cabo.sections.filter((section) => section.compartilhada).length,
+      cobertura: coverage(totals),
+      secoes: cabo.sections.length,
+      secoesComFaltantes: cabo.sections.filter((section) => section.faltante > 0).length,
+      subcabos: [...cabo.subcabos.values()].sort(descending),
+      cidades: locationHierarchy(cabo.sections),
+    };
+  }).sort(descending);
   const rank = new Map(rankedCabos.map((cabo, index) => [cabo.id, index]));
   const cityCounts = new Map();
   const zoneCounts = new Map();
@@ -162,3 +187,4 @@ function buildScopedElectionReports({ voters = [], tseRows = [], candidateName =
 }
 
 module.exports = { buildScopedElectionReports };
+
