@@ -28,13 +28,14 @@ function textFromPdf(buffer) {
   return parsed.stdout;
 }
 
-test('PDF por subcabo não atribui votos TSE da seção compartilhada', async () => {
+test('PDF por subcabo mostra o total TSE da secao compartilhada, sem atribuir ao subcabo', async () => {
   const res = response();
   router.pdfBuilders.sendSubcaboReportPdf(res, report, 18);
   await new Promise((resolve, reject) => { res.on('finish', resolve); res.on('error', reject); });
   const text = textFromPdf(res.buffer());
-  assert.match(text, /compartilhada, sem atribuição/i);
-  assert.doesNotMatch(text, /987/);
+  assert.match(text, /Votos apurados na seção/i);
+  assert.doesNotMatch(text, /compartilhada, sem atribuição/i);
+  assert.match(text, /987/); // total da secao aparece; nao e atribuido ao subcabo
   assert.match(text, /Ana Exemplo/);
   assert.doesNotMatch(text, /Bia Exemplo/);
 });

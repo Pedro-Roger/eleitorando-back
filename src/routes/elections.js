@@ -1527,10 +1527,10 @@ function sendSubcaboReportPdf(res, report, subcaboId) {
           const sections = [...(bairro.secoes || [])].sort((a, b) => Number(b.faltante > 0) - Number(a.faltante > 0) || b.prometidos - a.prometidos);
           const rows = sections.map((section) => [
             section.zona, section.secao, formatNumber(section.prometidos),
-            section.compartilhada ? 'compartilhada, sem atribuição' : formatNumber(section.apurado),
+            section.apuracaoDisponivel === false ? 'Sem apuração TSE' : formatNumber(section.apurado),
             section.compartilhada ? '—' : formatNumber(section.faltante),
           ]);
-          if (rows.length) drawTableWithBackground(doc, ['Zona', 'Seção', 'Prometidos', 'TSE', 'Faltam'], rows,
+          if (rows.length) drawTableWithBackground(doc, ['Zona', 'Seção', 'Prometidos', 'Votos apurados na seção', 'Faltam'], rows,
             [width * .12, width * .12, width * .2, width * .32, width * .24], {
               headerFontSize: 9, bodyFontSize: 9, padding: 4,
               rowDetails: sections.map((section) => {
