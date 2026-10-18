@@ -1273,7 +1273,10 @@ function sendScopedMissingPdf(res, report) {
     const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
     const x = doc.page.margins.left;
     const top = doc.y;
-    const caboLabel = `CABO: ${section.cabo}`;
+    const subcabosDaSecao = [...new Set(section.pessoas.map((p) => p.subcabo).filter(Boolean))];
+    const caboLabel = subcabosDaSecao.length
+      ? `CABO: ${section.cabo}  |  SUBCABO: ${subcabosDaSecao.join(', ')}`
+      : `CABO: ${section.cabo}`;
     const locationLabel = `${section.city}  |  Zona ${section.zona}  |  Seção ${section.secao}`;
     const statsWidth = 170;
     const leftWidth = width - 24 - statsWidth;
