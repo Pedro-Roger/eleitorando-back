@@ -26,7 +26,7 @@ test('seção exclusiva: entregue e faltante vêm da regra compartilhada', () =>
   assert.equal(cabo.cobertura, 0.5);
 });
 
-test('seção com mais de um subcabo é compartilhada e não atribui votos ao cabo', () => {
+test('seção com mais de um subcabo é informada como compartilhada, mas conta inteira no total do cabo', () => {
   const report = buildScopedElectionReports({
     voters: [
       voter({ creatorId: 2, creatorName: 'Solange', creatorRole: 'SUBCABO', caboId: 1, caboName: 'Felipe' }),
@@ -37,7 +37,38 @@ test('seção com mais de um subcabo é compartilhada e não atribui votos ao ca
   const cabo = report.cabos[0];
   assert.equal(cabo.prometidos, 2);
   assert.equal(cabo.compartilhadas, 1);
-  assert.equal(cabo.prometidosCompartilhados, 2);
-  assert.equal(cabo.entregue, 0);
-  assert.equal(cabo.faltante, 0);
+  assert.equal(cabo.prometidosCompartilhados, 0);
+  assert.equal(cabo.entregue, 1);
+  assert.equal(cabo.faltante, 1);
+});
+
+test('secao compartilhada entre subcabos do mesmo cabo conta inteira no total do cabo', () => {
+  const base = { city: 'Fortaleza', neighborhood: 'Messejana', zone: 120, section: 533, creatorRole: 'SUBCABO', caboId: 1, caboName: 'Felipe' };
+  const report = buildScopedElectionReports({
+    voters: [
+      { ...base, name: 'Ana', creatorId: 2, creatorName: 'Solange' },
+      { ...base, name: 'Bruno', creatorId: 3, creatorName: 'Andre' },
+    ],
+    tseRows: [{ city: 'Fortaleza', zone: 120, section: 533, total: 1 }],
+    candidateName: 'X', year: 2026, office: 'DEPUTADO', turn: 1,
+  });
+  const cabo = report.cabos[0];
+  assert.equal(cabo.prometidos, 2);
+  assert.equal(cabo.entregue, 1);
+  assert.equal(cabo.faltante, 1);
+});
+
+test('secao com eleitores de dois cabos conta uma vez no total geral', () => {
+  const base = { city: 'Fortaleza', neighborhood: 'Messejana', zone: 120, section: 533, creatorRole: 'CABO' };
+  const report = buildScopedElectionReports({
+    voters: [
+      { ...base, name: 'Ana', creatorId: 1, creatorName: 'Felipe', caboId: 1, caboName: 'Felipe' },
+      { ...base, name: 'Carla', creatorId: 9, creatorName: 'Outro', caboId: 9, caboName: 'Outro' },
+    ],
+    tseRows: [{ city: 'Fortaleza', zone: 120, section: 533, total: 1 }],
+    candidateName: 'X', year: 2026, office: 'DEPUTADO', turn: 1,
+  });
+  assert.equal(report.totais.prometidos, 2);
+  assert.equal(report.totais.entregue, 1);
+  assert.equal(report.totais.faltante, 1);
 });

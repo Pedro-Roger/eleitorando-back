@@ -146,7 +146,8 @@ function buildScopedElectionReports({ voters = [], tseRows = [], candidateName =
     cabos.set(caboKey, cabo);
   }
   const rankedCabos = [...cabos.values()].map((cabo) => {
-    const totals = sumDeliveries(cabo.sections);
+    // Dentro do cabo a secao pertence ao cabo inteiro: conta uma vez, sem excluir compartilhadas entre subcabos.
+    const totals = sumDeliveries(cabo.sections.map((section) => ({ ...section, compartilhada: false })));
     return {
       id: cabo.id,
       name: cabo.name,
@@ -159,6 +160,22 @@ function buildScopedElectionReports({ voters = [], tseRows = [], candidateName =
       cidades: locationHierarchy(cabo.sections),
     };
   }).sort(descending);
+  // Total geral: cada localizacao (cidade, zona, secao) conta uma vez, com os prometidos de todos os cabos.
+  const porLocal = new Map();
+  for (const section of allSections) {
+    const lk = locationKey(section.city, section.zona, section.secao);
+    const atual = porLocal.get(lk) || { prometidos: 0, apuracaoDisponivel: section.apuracaoDisponivel, apuradoTseNaSecao: section.apuradoTseNaSecao };
+    atual.prometidos += section.prometidos;
+    porLocal.set(lk, atual);
+  }
+  const secoesUnicas = [...porLocal.values()].map((local) => ({
+    ...local,
+    ...sectionDelivery({ prometidos: local.prometidos, tse: local.apuracaoDisponivel ? local.apuradoTseNaSecao : null }),
+    compartilhada: false,
+  }));
+  const totais = sumDeliveries(secoesUnicas);
+  totais.cobertura = coverage(totais);
+
   const rank = new Map(rankedCabos.map((cabo, index) => [cabo.id, index]));
   const cityCounts = new Map();
   const zoneCounts = new Map();
@@ -181,6 +198,7 @@ function buildScopedElectionReports({ voters = [], tseRows = [], candidateName =
   ));
   return {
     candidateName, filters, year, office, turn,
+    totais,
     cabos: rankedCabos,
     missingSections: orderedSections.filter((section) => section.faltantes > 0),
     secoes: orderedSections,
