@@ -1448,6 +1448,51 @@ router.get('/inteligencia-eleitoral/relatorio-geral/pdf', requireRole('ADMIN'), 
   sendGeneralReportPdf(res, await loadElectionIntelligenceReport(req));
 });
 
+function sendCaboReportPdf(res, report, caboId) {
+  const cabo = (report.cabos || []).find((item) => String(item.id) === String(caboId)) || report.cabos?.[0];
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36, bufferPages: true });
+  const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'attachment; filename="relatorio-por-cabo.pdf"');
+  doc.pipe(res);
+  drawIntelligenceHeader(doc, report, `RELATÓRIO POR CABO: ${cabo?.cabo || 'Não encontrado'}`, 'Promessas e apuração por cidade, bairro e seção');
+  if (!cabo) {
+    doc.font('Helvetica').fontSize(10).text('Nenhum cabo encontrado para os filtros selecionados.');
+  } else {
+    drawMetricCards(doc, [
+      { value: cabo.prometidos, label: 'PROMETIDOS' },
+      { value: cabo.entregue, label: 'ENTREGUES' },
+      { value: cabo.faltante, label: 'FALTANTES' },
+      { value: formatPercent((cabo.cobertura || 0) * 100), label: 'COBERTURA' },
+    ], { height: 52, fontSize: 16, gap: 6 });
+    const subRows = (cabo.subcabos || []).map((sub) => [sub.subcabo, formatNumber(sub.prometidos), formatNumber(sub.secoes), formatNumber(sub.secoesCompartilhadas ?? sub.compartilhadas)]);
+    if (subRows.length) drawTableWithBackground(doc, ['Subcabo', 'Promessas', 'Seções', 'Seções compartilhadas'], subRows,
+      [width * .48, width * .19, width * .16, width * .17], { headerFontSize: 9, bodyFontSize: 9, padding: 4 });
+    const caboHierarchies = (report.hierarchy || []).filter((item) => item.cabo === cabo.cabo);
+    for (const hierarchy of caboHierarchies) for (const subcabo of hierarchy.subcabos || []) for (const city of subcabo.cidades || []) {
+      if (doc.y > doc.page.height - 110) doc.addPage();
+      doc.moveDown(0.45);
+      doc.font('Helvetica-Bold').fontSize(12).fillColor('#18344B').text(`CIDADE: ${city.city} | SUBCABO: ${subcabo.subcabo}`, { width });
+      for (const bairro of city.bairros || []) {
+        doc.font('Helvetica-Bold').fontSize(10).fillColor('#334155').text(`BAIRRO: ${bairro.bairro}`, { width });
+        const sections = [...(bairro.secoes || [])].sort((a, b) => Number(b.faltante > 0) - Number(a.faltante > 0) || b.prometidos - a.prometidos);
+        const rows = sections.map((section) => [section.zona, section.secao, formatNumber(section.prometidos), section.compartilhada ? '—' : formatNumber(section.apurado), section.compartilhada ? '—' : formatNumber(section.faltante), section.compartilhada ? 'Compartilhada, sem atribuição' : section.status]);
+        if (rows.length) drawTableWithBackground(doc, ['Zona', 'Seção', 'Prometidos', 'Entregues', 'Faltantes', 'Situação'], rows,
+          [width * .1, width * .1, width * .17, width * .17, width * .17, width * .29], {
+            headerFontSize: 9, bodyFontSize: 9, padding: 4,
+            rowDetails: sections.map((section) => section.faltante > 0 && !section.compartilhada ? section.eleitores.join(', ') : ''), detailsFontSize: 9,
+          });
+      }
+    }
+  }
+  addPdfPageNumbers(doc);
+  doc.end();
+}
+
+router.get('/inteligencia-eleitoral/relatorio-cabo/pdf', requireRole('ADMIN'), async (req, res) => {
+  sendCaboReportPdf(res, await loadElectionIntelligenceReport(req), req.query.caboId);
+});
+
 router.get('/inteligencia-eleitoral', requireRole('ADMIN'), async (req, res) => {
   res.json(await loadScopedElectionReport(req));
 });
@@ -1518,5 +1563,5 @@ router.get('/relatorio-eleitores', requireRole('ADMIN'), async (req, res) => {
   res.json({ items: result });
 });
 
-router.pdfBuilders = { sendGeneralReportPdf };
+router.pdfBuilders = { sendGeneralReportPdf, sendCaboReportPdf };
 module.exports = router;
