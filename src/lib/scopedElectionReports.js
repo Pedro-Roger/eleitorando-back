@@ -183,6 +183,7 @@ function buildScopedElectionReports({ voters = [], tseRows = [], candidateName =
     candidateName, filters, year, office, turn,
     cabos: rankedCabos,
     missingSections: orderedSections.filter((section) => section.faltantes > 0),
+    secoes: orderedSections,
   };
 }
 

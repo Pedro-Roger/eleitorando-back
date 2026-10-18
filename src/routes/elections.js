@@ -1550,11 +1550,54 @@ router.get('/inteligencia-eleitoral/relatorio-subcabo/pdf', requireRole('ADMIN')
   sendSubcaboReportPdf(res, await loadElectionIntelligenceReport(req), req.query.subcaboId);
 });
 
+function sendSingleVoteReportPdf(res, report) {
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36, bufferPages: true });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'attachment; filename="relatorio-voto-unico-por-secao.pdf"');
+  doc.pipe(res);
+  const usable = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  drawIntelligenceHeader(doc, report, 'SEÇÕES COM UM VOTO PROMETIDO', 'Conferência: o voto prometido foi apurado na seção?');
+  doc.font('Helvetica').fontSize(9).fillColor('#475569')
+    .text('Lista cada eleitor de seção com exatamente um voto prometido. O TSE informa só o total de votos da candidata na seção, por isso "Apurado" significa que a seção teve ao menos um voto, não que este eleitor votou.');
+  doc.moveDown(0.45);
+  const rows = [];
+  for (const section of (report.secoes || []).filter((item) => item.prometidos === 1)) {
+    const person = section.pessoas[0] || {};
+    const semApuracao = !section.apuracaoDisponivel;
+    rows.push([
+      section.cabo || '-',
+      person.subcabo || 'Cadastro direto',
+      person.name || 'Eleitor sem nome',
+      person.bairro || '-',
+      section.city || '-',
+      section.zona,
+      section.secao,
+      semApuracao ? '—' : formatNumber(section.apuradoTseNaSecao),
+      semApuracao ? 'Sem apuração TSE' : (section.apuradoTseNaSecao > 0 ? 'Apurado' : 'Não apurado'),
+    ]);
+  }
+  rows.sort((a, b) => a[0].localeCompare(b[0], 'pt-BR') || a[1].localeCompare(b[1], 'pt-BR') || a[4].localeCompare(b[4], 'pt-BR') || a[3].localeCompare(b[3], 'pt-BR'));
+  const widths = [.13, .13, .18, .12, .12, .06, .06, .08, .12].map((w) => usable * w);
+  if (rows.length) {
+    drawTableWithBackground(doc, ['Cabo', 'Subcabo', 'Eleitor', 'Bairro', 'Cidade', 'Zona', 'Seção', 'TSE na seção', 'Situação'], rows, widths, {
+      headerFontSize: 8, bodyFontSize: 8, padding: 3,
+      alignments: ['left', 'left', 'left', 'left', 'left', 'center', 'center', 'right', 'center'],
+    });
+  } else {
+    doc.font('Helvetica').fontSize(10).fillColor('#047857').text('Nenhuma seção com exatamente um voto prometido nos filtros escolhidos.');
+  }
+  addPdfPageNumbers(doc);
+  doc.end();
+}
+
 router.get('/inteligencia-eleitoral', requireRole('ADMIN'), async (req, res) => {
   res.json(await loadScopedElectionReport(req));
 });
 router.get('/inteligencia-eleitoral/eleitores/pdf', requireRole('ADMIN'), async (req, res) => {
   sendScopedMissingPdf(res, await loadScopedElectionReport(req));
+});
+router.get('/inteligencia-eleitoral/voto-unico/pdf', requireRole('ADMIN'), async (req, res) => {
+  sendSingleVoteReportPdf(res, await loadScopedElectionReport(req));
 });
 router.get('/inteligencia-eleitoral/resumo-cabos/pdf', requireRole('ADMIN'), async (req, res) => {
   sendScopedSummaryPdf(res, await loadScopedElectionReport(req));
@@ -1620,5 +1663,5 @@ router.get('/relatorio-eleitores', requireRole('ADMIN'), async (req, res) => {
   res.json({ items: result });
 });
 
-router.pdfBuilders = { sendGeneralReportPdf, sendCaboReportPdf, sendSubcaboReportPdf };
+router.pdfBuilders = { sendGeneralReportPdf, sendCaboReportPdf, sendSubcaboReportPdf, sendSingleVoteReportPdf };
 module.exports = router;
