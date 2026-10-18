@@ -8,7 +8,8 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:generate": "prisma generate",
     "seed": "node prisma/seed.js",
-    "seed:admin": "node prisma/seed-admin.js"
+    "seed:admin": "node prisma/seed-admin.js",
+    "test": "node --test \"src/**/*.test.js\""
   },
   "prisma": {
     "seed": "node prisma/seed.js"
