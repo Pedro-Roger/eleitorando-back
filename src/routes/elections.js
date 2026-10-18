@@ -731,7 +731,12 @@ function drawIntelligenceSection(doc, cabo, subcabo, city, bairro, section) {
   const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   const x = doc.page.margins.left;
   const label = `CABO: ${cabo.cabo}  |  SUBCABO: ${subcabo.subcabo} (${formatNumber(subcabo.prometidos)} promessas)`;
-  if (doc.y > doc.page.height - 92) doc.addPage();
+  if (doc.y > doc.page.height - 150) doc.addPage();
+  drawMetricCards(doc, [
+    { value: section.prometidosSecao, label: 'VOTOS PROMETIDOS' },
+    { value: section.apurado, label: 'VOTOS APURADOS' },
+    { value: section.faltantes, label: 'VOTOS FALTANTES', color: '#B74343', background: '#FFF1F0' },
+  ], { height: 45, fontSize: 14, gap: 4 });
   doc.font('Helvetica-Bold').fontSize(10).fillColor('#18344B').text(label, { width });
   doc.font('Helvetica').fontSize(9).fillColor('#334155')
     .text(`Cidade: ${city.city} (${formatNumber(city.prometidos)} promessas)  >  Bairro: ${bairro.bairro} (${formatNumber(bairro.prometidos)} promessas)  >  Zona: ${section.zona}  >  Seção: ${section.secao}`, { width });
@@ -743,23 +748,20 @@ function drawIntelligenceSection(doc, cabo, subcabo, city, bairro, section) {
   }
 
   doc.moveDown(0.2);
-  const tableWidths = [width * 0.78, width * 0.22];
-  const names = section.eleitores.map((name) => [name || 'Eleitor sem nome', '1 voto prometido']);
-  drawTableWithBackground(doc, ['PESSOAS CADASTRADAS NESTE GRUPO / SEÇÃO', 'PROMETEU'], names, tableWidths, {
-    headerFontSize: 8,
-    bodyFontSize: 9,
-    padding: 4,
-    alignments: ['left', 'right'],
-  });
-
-  if (doc.y > doc.page.height - doc.page.margins.bottom - 60) doc.addPage();
-  drawMetricCards(doc, [
-    { value: section.eleitores.length, label: 'PESSOAS NESTE GRUPO' },
-    { value: section.prometidosSecao, label: 'PROMESSAS NA SEÇÃO' },
-    { value: section.apurado, label: 'VOTOS NA SEÇÃO (TSE)' },
-    { value: section.faltantes, label: 'VOTOS FALTANTES', color: '#B74343', background: '#FFF1F0' },
-    { value: formatPercent(section.percentualVotos), label: 'COBERTURA NUMÉRICA' },
-  ], { height: 45, fontSize: 14, gap: 4 });
+  // Nomes só nas seções com voto faltante: sem falta, não há o que apontar
+  if (section.faltantes > 0) {
+    const tableWidths = [width * 0.78, width * 0.22];
+    const names = section.eleitores.map((name) => [name || 'Eleitor sem nome', 'Voto faltante possível']);
+    drawTableWithBackground(doc, ['PESSOAS CADASTRADAS NESTE GRUPO / SEÇÃO', 'SITUAÇÃO'], names, tableWidths, {
+      headerFontSize: 8,
+      bodyFontSize: 9,
+      padding: 4,
+      alignments: ['left', 'right'],
+    });
+  } else {
+    doc.font('Helvetica').fontSize(9).fillColor('#52677A')
+      .text('Sem voto faltante nesta seção: nomes não listados.', { width });
+  }
   doc.moveDown(0.25);
 }
 
