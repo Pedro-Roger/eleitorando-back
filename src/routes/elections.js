@@ -1434,7 +1434,7 @@ function sendGeneralReportPdf(res, report) {
     const key = `${city.city}|${section.zona}|${section.secao}`;
     names.set(key, [...(names.get(key) || []), ...(section.eleitores || [])]);
   }
-  const rows = details.map((section) => [section.city, section.zona, section.secao, section.bairros.join(', ') || '-', formatNumber(section.prometidos), formatNumber(section.apurado), section.faltante === null ? '—' : formatNumber(section.faltante), section.compartilhada ? 'Compartilhada' : section.status]);
+  const rows = details.map((section) => [section.city, section.zona, section.secao, section.bairros.join(', ') || '-', formatNumber(section.prometidos), section.compartilhada ? 'compartilhada, sem atribuição' : formatNumber(section.apurado), section.faltante === null ? '—' : formatNumber(section.faltante), section.compartilhada ? 'Compartilhada' : section.status]);
   if (rows.length) drawTableWithBackground(doc, ['Cidade', 'Zona', 'Seção', 'Bairro', 'Prometidos', 'TSE', 'Faltantes', 'Situação'], rows,
     [width * .19, width * .07, width * .08, width * .19, width * .12, width * .11, width * .11, width * .13], {
       headerFontSize: 9, bodyFontSize: 9, padding: 4,
@@ -1491,6 +1491,60 @@ function sendCaboReportPdf(res, report, caboId) {
 
 router.get('/inteligencia-eleitoral/relatorio-cabo/pdf', requireRole('ADMIN'), async (req, res) => {
   sendCaboReportPdf(res, await loadElectionIntelligenceReport(req), req.query.caboId);
+});
+
+function sendSubcaboReportPdf(res, report, subcaboId) {
+  const subcabo = (report.subcabos || []).find((item) => String(item.id) === String(subcaboId)) || report.subcabos?.[0];
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36, bufferPages: true });
+  const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'attachment; filename="relatorio-por-subcabo.pdf"');
+  doc.pipe(res);
+  drawIntelligenceHeader(doc, report, `RELATÓRIO POR SUBCABO: ${subcabo?.subcabo || 'Não encontrado'}`, 'Seções exclusivas e compartilhadas');
+  if (!subcabo) {
+    doc.font('Helvetica').fontSize(10).text('Nenhum subcabo encontrado para os filtros selecionados.');
+  } else {
+    drawMetricCards(doc, [
+      { value: subcabo.prometidos, label: 'PROMETIDOS' },
+      { value: subcabo.prometidosExclusivos, label: 'PROMETIDOS EXCLUSIVOS' },
+      { value: subcabo.secoesCompartilhadas ?? subcabo.compartilhadas, label: 'SEÇÕES COMPARTILHADAS' },
+    ], { height: 52, fontSize: 16, gap: 8 });
+    doc.font('Helvetica').fontSize(9).fillColor('#52677A')
+      .text(`Entregue: ${formatNumber(subcabo.entregue)} | Faltante: ${formatNumber(subcabo.faltante)} (somente seções exclusivas)`, { width });
+    const hierarchies = (report.hierarchy || []).filter((cabo) => cabo.cabo === subcabo.cabo);
+    for (const hierarchy of hierarchies) for (const team of hierarchy.subcabos || []) {
+      if (team.subcabo !== subcabo.subcabo) continue;
+      for (const city of team.cidades || []) {
+        doc.moveDown(0.45);
+        doc.font('Helvetica-Bold').fontSize(12).fillColor('#18344B').text(`CIDADE: ${city.city}`, { width });
+        for (const bairro of city.bairros || []) {
+          doc.font('Helvetica-Bold').fontSize(10).fillColor('#334155').text(`BAIRRO: ${bairro.bairro}`, { width });
+          const sections = [...(bairro.secoes || [])].sort((a, b) => Number(b.faltante > 0) - Number(a.faltante > 0) || b.prometidos - a.prometidos);
+          const rows = sections.map((section) => [
+            section.zona, section.secao, formatNumber(section.prometidos),
+            section.compartilhada ? 'compartilhada, sem atribuição' : formatNumber(section.apurado),
+            section.compartilhada ? '—' : formatNumber(section.faltante),
+          ]);
+          if (rows.length) drawTableWithBackground(doc, ['Zona', 'Seção', 'Prometidos', 'TSE', 'Faltam'], rows,
+            [width * .12, width * .12, width * .2, width * .32, width * .24], {
+              headerFontSize: 9, bodyFontSize: 9, padding: 4,
+              rowDetails: sections.map((section) => {
+                if (section.compartilhada) return `${section.eleitores.length} pessoa(s) cadastrada(s) nesta seção compartilhada`;
+                if (section.faltante > 0) return section.eleitores.join(', ');
+                return `${section.eleitores.length} pessoa(s) cadastrada(s); sem falta nesta seção`;
+              }),
+              detailsFontSize: 9,
+            });
+        }
+      }
+    }
+  }
+  addPdfPageNumbers(doc);
+  doc.end();
+}
+
+router.get('/inteligencia-eleitoral/relatorio-subcabo/pdf', requireRole('ADMIN'), async (req, res) => {
+  sendSubcaboReportPdf(res, await loadElectionIntelligenceReport(req), req.query.subcaboId);
 });
 
 router.get('/inteligencia-eleitoral', requireRole('ADMIN'), async (req, res) => {
@@ -1563,5 +1617,5 @@ router.get('/relatorio-eleitores', requireRole('ADMIN'), async (req, res) => {
   res.json({ items: result });
 });
 
-router.pdfBuilders = { sendGeneralReportPdf, sendCaboReportPdf };
+router.pdfBuilders = { sendGeneralReportPdf, sendCaboReportPdf, sendSubcaboReportPdf };
 module.exports = router;
