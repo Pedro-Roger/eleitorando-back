@@ -1014,7 +1014,7 @@ function sendCaboSummaryPdf(res, report) {
   ]);
   if (sharedRows.length) {
     drawTableWithBackground(doc,
-      ['Cabos / subcabos', 'Cidade', 'Bairro(s)', 'Zona', 'Seção', 'Prometidos', 'TSE', 'Faltantes', 'Cobertura'],
+      ['Cabos / subcabos', 'Cidade', 'Bairro(s)', 'Zona', 'Seção', 'Prometidos', 'TSE', 'Faltantes', '% quebra'],
       sharedRows,
       [usable * .18, usable * .11, usable * .14, usable * .07, usable * .07, usable * .11, usable * .11, usable * .1, usable * .11],
       { headerFontSize: 7.5, bodyFontSize: 8, padding: 3, alignments: ['left', 'left', 'left', 'center', 'center', 'right', 'right', 'right', 'right'] }
@@ -1389,13 +1389,13 @@ function sendGeneralReportPdf(res, report) {
     { value: report.totals.prometidos, label: 'TOTAL PROMETIDO' },
     { value: report.totals.entregue, label: 'TOTAL ENTREGUE' },
     { value: report.totals.faltante, label: 'TOTAL FALTANTE' },
-    { value: formatPercent((report.totals.cobertura || 0) * 100), label: 'COBERTURA' },
+    { value: formatPercent((report.totals.quebra || 0) * 100), label: '% DE QUEBRA' },
     { value: report.totals.compartilhadas, label: 'SEÇÕES COMPARTILHADAS' },
   ], { height: 52, fontSize: 16, gap: 5 });
 
   doc.font('Helvetica-Bold').fontSize(12).fillColor('#18344B').text('RANKING POR CABO', { width });
-  const caboRows = report.cabos.map((cabo) => [cabo.cabo, formatNumber(cabo.prometidos), formatNumber(cabo.entregue), formatNumber(cabo.faltante), formatPercent((cabo.cobertura || 0) * 100)]);
-  if (caboRows.length) drawTableWithBackground(doc, ['Cabo', 'Prometidos', 'Entregues', 'Faltantes', 'Cobertura'], caboRows,
+  const caboRows = report.cabos.map((cabo) => [cabo.cabo, formatNumber(cabo.prometidos), formatNumber(cabo.entregue), formatNumber(cabo.faltante), formatPercent((cabo.quebra || 0) * 100)]);
+  if (caboRows.length) drawTableWithBackground(doc, ['Cabo', 'Prometidos', 'Entregues', 'Faltantes', '% quebra'], caboRows,
     [width * .34, width * .17, width * .17, width * .17, width * .15], { headerFontSize: 9, bodyFontSize: 9, padding: 4 });
 
   const cityRows = new Map();
@@ -1423,8 +1423,8 @@ function sendGeneralReportPdf(res, report) {
     doc.moveDown(0.6);
     const sharedPromiseCount = (report.sectionAudits || []).filter((section) => section.city === city && section.compartilhada).reduce((sum, section) => sum + (section.prometidos || 0), 0);
     doc.font('Helvetica-Bold').fontSize(12).fillColor('#18344B').text(`CIDADE: ${city} | ${formatNumber(summary.prometidos)} prometidos | ${formatNumber(summary.entregue)} entregues | ${formatNumber(summary.faltante)} faltantes | ${formatNumber(sharedPromiseCount)} em seções compartilhadas`, { width });
-    const rows = [...summary.bairros.values()].map((bairro) => [bairro.bairro, formatNumber(bairro.prometidos), formatNumber(bairro.entregue), formatNumber(bairro.faltante), formatPercent(bairro.prometidos ? bairro.entregue / bairro.prometidos * 100 : 0)]);
-    if (rows.length) drawTableWithBackground(doc, ['Bairro', 'Prometidos', 'Entregues', 'Faltantes', 'Cobertura'], rows,
+    const rows = [...summary.bairros.values()].map((bairro) => [bairro.bairro, formatNumber(bairro.prometidos), formatNumber(bairro.entregue), formatNumber(bairro.faltante), formatPercent(bairro.prometidos ? bairro.faltante / bairro.prometidos * 100 : 0)]);
+    if (rows.length) drawTableWithBackground(doc, ['Bairro', 'Prometidos', 'Entregues', 'Faltantes', '% quebra'], rows,
       [width * .34, width * .17, width * .17, width * .17, width * .15], { headerFontSize: 9, bodyFontSize: 9, padding: 4 });
     const shared = (report.compartilhadasEntreBairros || []).filter((section) => section.city === city);
     const sharedText = shared.length ? shared.map((section) => `Zona ${section.zona}, seção ${section.secao}: ${section.bairros.join(', ')}`).join('; ') : 'Nenhuma';
@@ -1468,7 +1468,7 @@ function sendCaboReportPdf(res, report, caboId) {
       { value: cabo.prometidos, label: 'PROMETIDOS' },
       { value: cabo.entregue, label: 'ENTREGUES' },
       { value: cabo.faltante, label: 'FALTANTES' },
-      { value: formatPercent((cabo.cobertura || 0) * 100), label: 'COBERTURA' },
+      { value: formatPercent((cabo.quebra || 0) * 100), label: '% DE QUEBRA' },
     ], { height: 52, fontSize: 16, gap: 6 });
     const subRows = (cabo.subcabos || []).map((sub) => [sub.subcabo, formatNumber(sub.prometidos), formatNumber(sub.secoes), formatNumber(sub.secoesCompartilhadas ?? sub.compartilhadas)]);
     if (subRows.length) drawTableWithBackground(doc, ['Subcabo', 'Promessas', 'Seções', 'Seções compartilhadas'], subRows,

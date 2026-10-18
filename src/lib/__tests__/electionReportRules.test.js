@@ -1,6 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { sectionDelivery, markShared, sumDeliveries, coverage } = require('../electionReportRules');
+const { sectionDelivery, markShared, sumDeliveries, quebra } = require('../electionReportRules');
 
 test('entregue é o mínimo entre prometido e votos TSE', () => {
   assert.deepEqual(sectionDelivery({ prometidos: 5, tse: 3 }), {
@@ -14,10 +14,10 @@ test('votos TSE acima do prometido viram excedente, não falta', () => {
   });
 });
 
-test('seção sem apuração não tem entregue nem falta', () => {
+test('seção sem apuração conta toda como faltante', () => {
   const section = sectionDelivery({ prometidos: 4, tse: null });
-  assert.equal(section.entregue, null);
-  assert.equal(section.faltante, null);
+  assert.equal(section.entregue, 0);
+  assert.equal(section.faltante, 4);
   assert.equal(section.status, 'sem-apuracao');
 });
 
@@ -40,13 +40,13 @@ test('sumDeliveries separa compartilhadas e sem apuração e fecha o total prome
   ];
   const totals = sumDeliveries(sections);
   assert.deepEqual(totals, {
-    prometidos: 17, entregue: 5, faltante: 2, excedente: 5,
-    prometidosCompartilhados: 6, prometidosSemApuracao: 4,
+    prometidos: 17, entregue: 5, faltante: 6, excedente: 5,
+    prometidosCompartilhados: 6, prometidosSemApuracao: 0,
   });
   assert.equal(totals.prometidos, totals.entregue + totals.faltante + totals.prometidosCompartilhados + totals.prometidosSemApuracao);
 });
 
-test('coverage é entregue sobre prometido e zero quando não há prometidos', () => {
-  assert.equal(coverage({ prometidos: 10, entregue: 4 }), 0.4);
-  assert.equal(coverage({ prometidos: 0, entregue: 0 }), 0);
+test('quebra é faltante sobre prometido e zero quando não há prometidos', () => {
+  assert.equal(quebra({ prometidos: 10, faltante: 4 }), 0.4);
+  assert.equal(quebra({ prometidos: 0, faltante: 0 }), 0);
 });

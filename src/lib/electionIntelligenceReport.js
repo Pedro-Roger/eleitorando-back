@@ -1,4 +1,4 @@
-const { sectionDelivery, markShared, sumDeliveries, coverage } = require('./electionReportRules');
+const { sectionDelivery, markShared, sumDeliveries, quebra } = require('./electionReportRules');
 
 function text(value) {
   return String(value || '').trim();
@@ -62,7 +62,7 @@ function summarize(sections) {
     faltantes: totals.faltante,
     percentualVotos: percentage(totals.entregue, totals.prometidos),
     percentualFaltantes: percentage(totals.faltante, totals.prometidos),
-    cobertura: coverage(totals),
+    quebra: quebra(totals),
     compartilhadas: deliveries.filter((section) => section.compartilhada).length,
   };
 }
@@ -152,7 +152,7 @@ function finishGroup(group, auditBySection) {
           ...bairro,
           ...totals,
           compartilhadas: bairro.secoes.filter((section) => section.compartilhada).length,
-          cobertura: coverage(totals),
+          quebra: quebra(totals),
           secoes: bairro.secoes.sort(byPromised),
         };
       })
@@ -179,7 +179,7 @@ function finishCabo(cabo, auditBySection) {
         prometidosExclusivos: exclusiveSummary.prometidos,
         prometidosCompartilhados: totalSummary.prometidos - exclusiveSummary.prometidos,
         compartilhadas: sharedSections.length,
-        cobertura: coverage({ prometidos: totalSummary.prometidos, entregue: exclusiveSummary.entregue }),
+        quebra: quebra({ prometidos: totalSummary.prometidos, faltante: exclusiveSummary.faltante }),
         secoes: subcabo.sections.size,
         secoesCompartilhadas: sharedSections.length,
       };
@@ -200,7 +200,7 @@ function finishCabo(cabo, auditBySection) {
     prometidosSemApuracao: exclusiveSummary.prometidosSemApuracao,
     prometidosCompartilhados: sharedSections.reduce((sum, [, section]) => sum + section.prometidos, 0),
     compartilhadas: sharedSections.length,
-    cobertura: coverage({ prometidos: caboTotals.prometidos, entregue: exclusiveSummary.entregue }),
+    quebra: quebra({ prometidos: caboTotals.prometidos, faltante: exclusiveSummary.faltante }),
     apurado: exclusiveSummary.apurado,
     votos: exclusiveSummary.votos,
     faltantes: exclusiveSummary.faltantes,
@@ -450,7 +450,7 @@ function buildElectionIntelligenceReport({ voters = [], teamSectionRows, tseRows
       prometidosExclusivos: exclusiveSummary.prometidos,
       prometidosCompartilhados: totalSummary.prometidos - exclusiveSummary.prometidos,
       compartilhadas: sharedSections.length,
-      cobertura: coverage({ prometidos: totalSummary.prometidos, entregue: exclusiveSummary.entregue }),
+      quebra: quebra({ prometidos: totalSummary.prometidos, faltante: exclusiveSummary.faltante }),
       secoes: subcabo.sections.size,
       secoesCompartilhadas: sharedSections.length,
     };
@@ -461,7 +461,7 @@ function buildElectionIntelligenceReport({ voters = [], teamSectionRows, tseRows
   totals.faltantes = totals.faltante;
   totals.percentualVotos = percentage(totals.entregue, totals.prometidos);
   totals.percentualFaltantes = percentage(totals.faltante, totals.prometidos);
-  totals.cobertura = coverage(totals);
+  totals.quebra = quebra(totals);
   totals.compartilhadas = sectionAuditRows.filter((section) => section.compartilhada).length;
   const sharedSections = sectionAuditRows.filter((section) => section.compartilhadaEntreCabos);
   const compartilhadasEntreBairros = sectionAuditRows.filter((section) => section.compartilhadaEntreBairros);

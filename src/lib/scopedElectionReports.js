@@ -1,4 +1,4 @@
-const { sectionDelivery, markShared, sumDeliveries, coverage } = require('./electionReportRules');
+const { sectionDelivery, markShared, sumDeliveries, quebra } = require('./electionReportRules');
 
 function label(value, fallback = '') {
   return String(value ?? '').trim() || fallback;
@@ -153,7 +153,7 @@ function buildScopedElectionReports({ voters = [], tseRows = [], candidateName =
       name: cabo.name,
       ...totals,
       compartilhadas: cabo.sections.filter((section) => section.compartilhada).length,
-      cobertura: coverage(totals),
+      quebra: quebra(totals),
       secoes: cabo.sections.length,
       secoesComFaltantes: cabo.sections.filter((section) => section.faltante > 0).length,
       subcabos: [...cabo.subcabos.values()].sort(descending),
@@ -174,7 +174,7 @@ function buildScopedElectionReports({ voters = [], tseRows = [], candidateName =
     compartilhada: false,
   }));
   const totais = sumDeliveries(secoesUnicas);
-  totais.cobertura = coverage(totais);
+  totais.quebra = quebra(totais);
 
   const rank = new Map(rankedCabos.map((cabo, index) => [cabo.id, index]));
   const cityCounts = new Map();

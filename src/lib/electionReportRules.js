@@ -2,7 +2,8 @@
 // Não lê banco nem formata texto; só aritmética.
 function sectionDelivery({ prometidos, tse }) {
   if (tse === null || tse === undefined) {
-    return { prometidos, entregue: null, faltante: null, excedente: null, status: 'sem-apuracao' };
+    // Sem apuracao TSE conta como faltante: nao ha voto registrado para a secao.
+    return { prometidos, entregue: 0, faltante: prometidos, excedente: 0, status: 'sem-apuracao' };
   }
   const entregue = Math.min(prometidos, tse);
   const faltante = prometidos - entregue;
@@ -44,8 +45,8 @@ function sumDeliveries(sections) {
   return totals;
 }
 
-function coverage({ prometidos, entregue }) {
-  return prometidos > 0 ? entregue / prometidos : 0;
+function quebra({ prometidos, faltante }) {
+  return prometidos > 0 ? faltante / prometidos : 0;
 }
 
-module.exports = { sectionDelivery, markShared, sumDeliveries, coverage };
+module.exports = { sectionDelivery, markShared, sumDeliveries, quebra };

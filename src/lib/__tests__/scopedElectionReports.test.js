@@ -23,7 +23,7 @@ test('seção exclusiva: entregue e faltante vêm da regra compartilhada', () =>
   assert.equal(section.faltante, 1);
   assert.equal(section.compartilhada, false);
   assert.equal(cabo.entregue, 1);
-  assert.equal(cabo.cobertura, 0.5);
+  assert.equal(cabo.quebra, 0.5);
 });
 
 test('seção com mais de um subcabo é informada como compartilhada, mas conta inteira no total do cabo', () => {

@@ -33,7 +33,7 @@ test('PDF geral apresenta os totais, o ranking e seções compartilhadas entre b
   router.pdfBuilders.sendGeneralReportPdf(res, report);
   await new Promise((resolve, reject) => { res.on('finish', resolve); res.on('error', reject); });
   const text = pdfText(res.buffer());
-  for (const expected of ['Total prometido', 'Total entregue', 'Total faltante', '66,7%', 'Cabo Amostra', 'Seções compartilhadas entre bairros']) {
+  for (const expected of ['Total prometido', 'Total entregue', 'Total faltante', '% DE QUEBRA', 'Cabo Amostra', 'Seções compartilhadas entre bairros']) {
     assert.match(text, new RegExp(expected, 'i'));
   }
 });
