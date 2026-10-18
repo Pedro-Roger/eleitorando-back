@@ -1130,6 +1130,13 @@ async function loadElectionIntelligenceReport(req) {
     voterQuery = voterQuery.whereRaw('1 = 0');
   }
 
+
+  if (subcaboId) voterQuery = voterQuery.where('v.createdById', subcaboId);
+  else if (caboId) {
+    const subs = await knex('users').where('parentId', caboId).select('id');
+    voterQuery = voterQuery.whereIn('v.createdById', [caboId, ...subs.map((row) => row.id)]);
+  }
+  // Depois do filtro de cabo/subcabo: a contagem por equipe precisa ser do mesmo recorte.
   const teamSectionRows = await voterQuery.clone()
     .select(
       'v.city', 'v.neighborhood', 'v.zone', 'v.section',
@@ -1137,12 +1144,6 @@ async function loadElectionIntelligenceReport(req) {
     )
     .count('v.id as prometidos')
     .groupBy('v.city', 'v.neighborhood', 'v.zone', 'v.section', 'creator.name', 'creator.role', 'cabo.name');
-
-  if (subcaboId) voterQuery = voterQuery.where('v.createdById', subcaboId);
-  else if (caboId) {
-    const subs = await knex('users').where('parentId', caboId).select('id');
-    voterQuery = voterQuery.whereIn('v.createdById', [caboId, ...subs.map((row) => row.id)]);
-  }
 
   const voters = await voterQuery.select(
     'v.name', 'v.phone', 'v.city', 'v.neighborhood', 'v.zone', 'v.section',
