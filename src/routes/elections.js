@@ -1373,6 +1373,81 @@ function sendScopedSummaryPdf(res, report) {
   doc.end();
 }
 
+function sendGeneralReportPdf(res, report) {
+  const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36, bufferPages: true });
+  const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'attachment; filename="relatorio-geral-eleitoral.pdf"');
+  doc.pipe(res);
+  drawIntelligenceHeader(doc, report, 'RELATÓRIO GERAL DE INTELIGÊNCIA ELEITORAL', 'Promessas, entregas e faltantes por seção');
+  drawMetricCards(doc, [
+    { value: report.totals.prometidos, label: 'TOTAL PROMETIDO' },
+    { value: report.totals.entregue, label: 'TOTAL ENTREGUE' },
+    { value: report.totals.faltante, label: 'TOTAL FALTANTE' },
+    { value: formatPercent((report.totals.cobertura || 0) * 100), label: 'COBERTURA' },
+    { value: report.totals.compartilhadas, label: 'SEÇÕES COMPARTILHADAS' },
+  ], { height: 52, fontSize: 16, gap: 5 });
+
+  doc.font('Helvetica-Bold').fontSize(12).fillColor('#18344B').text('RANKING POR CABO', { width });
+  const caboRows = report.cabos.map((cabo) => [cabo.cabo, formatNumber(cabo.prometidos), formatNumber(cabo.entregue), formatNumber(cabo.faltante), formatPercent((cabo.cobertura || 0) * 100)]);
+  if (caboRows.length) drawTableWithBackground(doc, ['Cabo', 'Prometidos', 'Entregues', 'Faltantes', 'Cobertura'], caboRows,
+    [width * .34, width * .17, width * .17, width * .17, width * .15], { headerFontSize: 9, bodyFontSize: 9, padding: 4 });
+
+  const cityRows = new Map();
+  for (const section of report.sectionAudits || []) {
+    const city = cityRows.get(section.city) || { bairros: new Map(), prometidos: 0, entregue: 0, faltante: 0 };
+    city.prometidos += section.prometidos || 0;
+    if (!section.compartilhada) {
+      city.entregue += section.entregue || 0;
+      city.faltante += section.faltante || 0;
+    }
+    if ((section.bairros || []).length === 1) {
+      const name = section.bairros[0];
+      const bairro = city.bairros.get(name) || { bairro: name, prometidos: 0, entregue: 0, faltante: 0 };
+      bairro.prometidos += section.prometidos || 0;
+      if (!section.compartilhada) {
+        bairro.entregue += section.entregue || 0;
+        bairro.faltante += section.faltante || 0;
+      }
+      city.bairros.set(name, bairro);
+    }
+    cityRows.set(section.city, city);
+  }
+  for (const [city, summary] of cityRows) {
+    if (doc.y > doc.page.height - 100) doc.addPage();
+    doc.moveDown(0.6);
+    const sharedPromiseCount = (report.sectionAudits || []).filter((section) => section.city === city && section.compartilhada).reduce((sum, section) => sum + (section.prometidos || 0), 0);
+    doc.font('Helvetica-Bold').fontSize(12).fillColor('#18344B').text(`CIDADE: ${city} | ${formatNumber(summary.prometidos)} prometidos | ${formatNumber(summary.entregue)} entregues | ${formatNumber(summary.faltante)} faltantes | ${formatNumber(sharedPromiseCount)} em seções compartilhadas`, { width });
+    const rows = [...summary.bairros.values()].map((bairro) => [bairro.bairro, formatNumber(bairro.prometidos), formatNumber(bairro.entregue), formatNumber(bairro.faltante), formatPercent(bairro.prometidos ? bairro.entregue / bairro.prometidos * 100 : 0)]);
+    if (rows.length) drawTableWithBackground(doc, ['Bairro', 'Prometidos', 'Entregues', 'Faltantes', 'Cobertura'], rows,
+      [width * .34, width * .17, width * .17, width * .17, width * .15], { headerFontSize: 9, bodyFontSize: 9, padding: 4 });
+    const shared = (report.compartilhadasEntreBairros || []).filter((section) => section.city === city);
+    const sharedText = shared.length ? shared.map((section) => `Zona ${section.zona}, seção ${section.secao}: ${section.bairros.join(', ')}`).join('; ') : 'Nenhuma';
+    doc.font('Helvetica').fontSize(9).fillColor('#52677A').text(`Seções compartilhadas entre bairros: ${sharedText}`, { width });
+  }
+
+  doc.moveDown(0.6);
+  doc.font('Helvetica-Bold').fontSize(12).fillColor('#18344B').text('DETALHAMENTO POR ZONA E SEÇÃO', { width });
+  const details = [...(report.sectionAudits || [])].sort((a, b) => Number(b.faltante > 0) - Number(a.faltante > 0) || b.prometidos - a.prometidos);
+  const names = new Map();
+  for (const cabo of report.hierarchy || []) for (const sub of cabo.subcabos || []) for (const city of sub.cidades || []) for (const bairro of city.bairros || []) for (const section of bairro.secoes || []) {
+    const key = `${city.city}|${section.zona}|${section.secao}`;
+    names.set(key, [...(names.get(key) || []), ...(section.eleitores || [])]);
+  }
+  const rows = details.map((section) => [section.city, section.zona, section.secao, section.bairros.join(', ') || '-', formatNumber(section.prometidos), formatNumber(section.apurado), section.faltante === null ? '—' : formatNumber(section.faltante), section.compartilhada ? 'Compartilhada' : section.status]);
+  if (rows.length) drawTableWithBackground(doc, ['Cidade', 'Zona', 'Seção', 'Bairro', 'Prometidos', 'TSE', 'Faltantes', 'Situação'], rows,
+    [width * .19, width * .07, width * .08, width * .19, width * .12, width * .11, width * .11, width * .13], {
+      headerFontSize: 9, bodyFontSize: 9, padding: 4,
+      rowDetails: details.map((section) => section.faltante > 0 ? [...new Set(names.get(`${section.city}|${section.zona}|${section.secao}`) || [])].join(', ') : ''), detailsFontSize: 9,
+    });
+  addPdfPageNumbers(doc);
+  doc.end();
+}
+
+router.get('/inteligencia-eleitoral/relatorio-geral/pdf', requireRole('ADMIN'), async (req, res) => {
+  sendGeneralReportPdf(res, await loadElectionIntelligenceReport(req));
+});
+
 router.get('/inteligencia-eleitoral', requireRole('ADMIN'), async (req, res) => {
   res.json(await loadScopedElectionReport(req));
 });
@@ -1443,4 +1518,5 @@ router.get('/relatorio-eleitores', requireRole('ADMIN'), async (req, res) => {
   res.json({ items: result });
 });
 
+router.pdfBuilders = { sendGeneralReportPdf };
 module.exports = router;
