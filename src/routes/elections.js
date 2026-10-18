@@ -1270,7 +1270,9 @@ function sendScopedMissingPdf(res, report) {
   doc.font('Helvetica').fontSize(10.5).fillColor('#334155')
     .text('Este rastreio compara as promessas cadastradas pelo cabo e seus subcabos com o resultado oficial da seção. Os nomes indicam possibilidades para acompanhamento, sem confirmação individual de voto.');
   doc.moveDown(0.7);
-  for (const section of report.missingSections) {
+  // Inclui secoes com faltante e secoes com uma pessoa so (mesmo com voto apurado), para conferencia.
+  const secoesDoPdf = (report.secoes || report.missingSections).filter((section) => section.faltantes > 0 || section.prometidos === 1);
+  for (const section of secoesDoPdf) {
     if (doc.y > doc.page.height - 175) doc.addPage();
     const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
     const x = doc.page.margins.left;
@@ -1316,7 +1318,7 @@ function sendScopedMissingPdf(res, report) {
     }
     doc.moveDown(0.75);
   }
-  if (!report.missingSections.length) doc.text('Nenhuma seção com diferença numérica nos filtros escolhidos.');
+  if (!secoesDoPdf.length) doc.text('Nenhuma seção com diferença numérica nos filtros escolhidos.');
   addPdfPageNumbers(doc);
   doc.end();
 }
