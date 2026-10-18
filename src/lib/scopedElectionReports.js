@@ -31,8 +31,17 @@ function locationHierarchy(sections) {
       subcabo.prometidos += 1;
       const zone = subcabo.zonas.get(section.zona) || { name: section.zona, prometidos: 0, secoes: new Map() };
       zone.prometidos += 1;
-      const subsection = zone.secoes.get(section.secao) || { name: section.secao, prometidos: 0 };
+      const subsection = zone.secoes.get(section.secao) || {
+        name: section.secao,
+        prometidos: 0,
+        totalPrometidoNaSecao: section.prometidos,
+        apuradoTseNaSecao: section.apuradoTseNaSecao,
+        apuracaoDisponivel: section.apuracaoDisponivel,
+        faltantes: section.faltantes,
+        pessoas: [],
+      };
       subsection.prometidos += 1;
+      subsection.pessoas.push(person);
       zone.secoes.set(section.secao, subsection);
       subcabo.zonas.set(section.zona, zone);
       city.subcabos.set(subKey, subcabo);

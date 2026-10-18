@@ -573,7 +573,10 @@ function drawFullTable(doc, headers, rows, widths, options = {}) {
  * Versão melhorada que mede altura primeiro, desenha fundo, depois texto
  */
 function drawTableWithBackground(doc, headers, rows, widths, options = {}) {
-  const { headerFontSize = 8, bodyFontSize = 7.5, headerBg = '#E8EEF8', altRowBg = '#F8FAFC', padding = 3 } = options;
+  const {
+    headerFontSize = 8, bodyFontSize = 7.5, headerBg = '#E8EEF8', altRowBg = '#F8FAFC', padding = 3,
+    rowDetails = [], detailsFontSize = 9, detailsColor = '#52677A',
+  } = options;
   const pageBottom = doc.page.height - doc.page.margins.bottom;
   const totalWidth = widths.reduce((a, b) => a + b, 0);
   const xStart = doc.page.margins.left;
@@ -590,9 +593,15 @@ function drawTableWithBackground(doc, headers, rows, widths, options = {}) {
 
   function drawRow(values, fontSize, isHeader, rowIdx) {
     const rowHeight = measureRowHeight(values, fontSize, isHeader);
+    const detailText = !isHeader ? rowDetails[rowIdx] : '';
+    let detailHeight = 0;
+    if (detailText) {
+      doc.font('Helvetica').fontSize(detailsFontSize);
+      detailHeight = doc.heightOfString(String(detailText), { width: totalWidth - padding * 2 }) + padding * 2;
+    }
 
     // Nova página se não couber
-    if (doc.y + rowHeight > pageBottom) {
+    if (doc.y + rowHeight + detailHeight > pageBottom) {
       doc.addPage();
       // Redesenhar cabeçalho
       const headerY = doc.y;
@@ -637,6 +646,15 @@ function drawTableWithBackground(doc, headers, rows, widths, options = {}) {
       .stroke();
 
     doc.y = lineY;
+
+    if (detailText) {
+      doc.font('Helvetica').fontSize(detailsFontSize).fillColor(detailsColor)
+        .text(String(detailText), xStart + padding, doc.y + padding, {
+          width: totalWidth - padding * 2,
+          lineGap: 1,
+        });
+      doc.y += padding;
+    }
   }
 
   // Cabeçalho
@@ -1257,14 +1275,25 @@ function sendScopedMissingPdf(res, report) {
     const top = doc.y;
     const caboLabel = `CABO: ${section.cabo}`;
     const locationLabel = `${section.city}  |  Zona ${section.zona}  |  Seção ${section.secao}`;
-    const caboHeight = doc.font('Helvetica-Bold').fontSize(14).heightOfString(caboLabel, { width: width - 24 });
-    const locationHeight = doc.font('Helvetica').fontSize(11).heightOfString(locationLabel, { width: width - 24 });
-    const bandHeight = Math.max(60, caboHeight + locationHeight + 22);
+    const statsWidth = 170;
+    const leftWidth = width - 24 - statsWidth;
+    const caboHeight = doc.font('Helvetica-Bold').fontSize(14).heightOfString(caboLabel, { width: leftWidth });
+    const locationHeight = doc.font('Helvetica').fontSize(11).heightOfString(locationLabel, { width: leftWidth });
+    const bandHeight = Math.max(64, caboHeight + locationHeight + 22);
     doc.roundedRect(x, top, width, bandHeight, 5).fill('#18344B');
     doc.font('Helvetica-Bold').fontSize(14).fillColor('#FFFFFF')
-      .text(caboLabel, x + 12, top + 9, { width: width - 24 });
+      .text(caboLabel, x + 12, top + 9, { width: leftWidth });
     doc.font('Helvetica').fontSize(11).fillColor('#FFFFFF')
-      .text(locationLabel, x + 12, top + 11 + caboHeight, { width: width - 24 });
+      .text(locationLabel, x + 12, top + 11 + caboHeight, { width: leftWidth });
+    // Totais da seção, à direita da faixa
+    [
+      ['Total prometido', section.prometidos],
+      ['Total entregue', section.apuradoTseNaSecao],
+      ['Total faltante', section.faltantes],
+    ].forEach(([label, value], index) => {
+      doc.font('Helvetica-Bold').fontSize(10.5).fillColor('#FFFFFF')
+        .text(`${label}: ${formatNumber(value)}`, x + width - statsWidth - 4, top + 10 + index * 17, { width: statsWidth - 8, align: 'right', lineBreak: false });
+    });
     doc.y = top + bandHeight + 13;
     doc.x = x;
     doc.font('Helvetica-Bold').fontSize(11.5).fillColor('#18344B')
@@ -1299,6 +1328,8 @@ function sendScopedSummaryPdf(res, report) {
       .text(`${formatNumber(cabo.secoes)} seções | ${formatNumber(cabo.secoesComFaltantes)} com diferença numérica`);
     const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
     drawTableWithBackground(doc, ['Subcabo', 'Promessas'], cabo.subcabos.map((sub) => [sub.name, formatNumber(sub.prometidos)]), [width * .7, width * .3], { headerFontSize: 10.5, bodyFontSize: 11, padding: 6 });
+    doc.font('Helvetica').fontSize(9).fillColor('#52677A')
+      .text('Os totais de apuração e faltantes são da seção inteira e se repetem entre subcabos; os nomes listados pertencem ao subcabo exibido.', { width });
     for (const city of cabo.cidades) {
       doc.font('Helvetica-Bold').fontSize(12).fillColor('#18344B')
         .text(`CIDADE: ${city.name} | ${formatNumber(city.prometidos)} PROMESSAS`);
@@ -1306,9 +1337,31 @@ function sendScopedSummaryPdf(res, report) {
         doc.font('Helvetica-Bold').fontSize(11).fillColor('#334155')
           .text(`  SUBCABO: ${subcabo.name} | ${formatNumber(subcabo.prometidos)} PROMESSAS`);
         for (const zone of subcabo.zonas) {
-          doc.font('Helvetica').fontSize(10.5).fillColor('#334155')
+          doc.font('Helvetica-Bold').fontSize(10).fillColor('#334155')
             .text(`    ZONA ${zone.name} (${formatNumber(zone.prometidos)})`);
-          doc.text(`      ${zone.secoes.map((section) => `Seção ${section.name}: ${formatNumber(section.prometidos)}`).join('  |  ')}`);
+          const rows = zone.secoes.map((section) => [
+            section.name,
+            formatNumber(section.totalPrometidoNaSecao),
+            section.apuracaoDisponivel ? formatNumber(section.apuradoTseNaSecao) : '—',
+            section.faltantes === null ? '—' : formatNumber(section.faltantes),
+          ]);
+          const rowDetails = zone.secoes.map((section) => {
+            if (section.faltantes > 0) {
+              const people = section.pessoas.map((person) => `${person.name || 'Pessoa sem nome'} — Voto faltante possível`);
+              return people.join('\n');
+            }
+            if (section.faltantes === 0) return 'Sem voto faltante nesta seção';
+            return 'Apuração TSE indisponível nesta seção';
+          });
+          drawTableWithBackground(doc, ['Seção', 'Total prometido na seção', 'Total entregue (TSE)', 'Total faltante'], rows,
+            [width * .17, width * .25, width * .29, width * .29], {
+              headerFontSize: 9,
+              bodyFontSize: 9.5,
+              padding: 5,
+              alignments: ['left', 'right', 'right', 'right'],
+              rowDetails,
+              detailsFontSize: 9,
+            });
         }
       }
       doc.moveDown(0.35);
