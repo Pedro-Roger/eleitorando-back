@@ -30,9 +30,12 @@ function textFromPdf(buffer) {
 
 test('PDF por subcabo mostra o total TSE da secao compartilhada, sem atribuir ao subcabo', async () => {
   const res = response();
-  router.pdfBuilders.sendSubcaboReportPdf(res, report, 18);
+  const scoped = { cabos: [{ id: 7, prometidos: 2, entregue: 1, faltante: 1, quebra: 0.5, apurado: 987 }] };
+  router.pdfBuilders.sendSubcaboReportPdf(res, report, 18, scoped);
   await new Promise((resolve, reject) => { res.on('finish', resolve); res.on('error', reject); });
   const text = textFromPdf(res.buffer());
+  for (const card of ['PROMETIDOS', 'CONFIRMADOS', 'FALTANTES', '% DE QUEBRA', 'VOTOS DA CANDIDATA']) assert.match(text, new RegExp(card, 'i'));
+  assert.match(text, /50,0%|50\.0%/);
   assert.match(text, /Votos apurados na seção/i);
   assert.doesNotMatch(text, /compartilhada, sem atribuição/i);
   assert.match(text, /987/); // total da secao aparece; nao e atribuido ao subcabo

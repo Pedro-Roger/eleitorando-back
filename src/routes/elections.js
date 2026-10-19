@@ -1120,11 +1120,14 @@ async function loadElectionIntelligenceReport(req) {
   const subcaboId = Number(req.query.subcaboId) || 0;
   const teamFilters = await resolveTeamFilterLabels(caboId, subcaboId);
   const city = String(req.query.city || '').trim();
+  const neighborhood = String(req.query.neighborhood || '').trim();
   const zoneInput = String(req.query.zone || '').trim();
   const sectionInput = String(req.query.section || '').trim();
   const zone = /^\d+$/.test(zoneInput) ? Number.parseInt(zoneInput, 10) : Number.NaN;
   const section = /^\d+$/.test(sectionInput) ? Number.parseInt(sectionInput, 10) : Number.NaN;
-  if (city) voterQuery = voterQuery.whereRaw('UPPER(TRIM(v.city)) LIKE UPPER(?)', [`%${city}%`]);
+  // Mesmos filtros de loadScopedElectionReport, senao o PDF diverge do cabecalho do app.
+  if (city) voterQuery = voterQuery.whereRaw('UPPER(TRIM(v.city)) = UPPER(?)', [city]);
+  if (neighborhood) voterQuery = voterQuery.whereRaw('UPPER(TRIM(v.neighborhood)) = UPPER(?)', [neighborhood]);
   if (Number.isFinite(zone)) voterQuery = voterQuery.where('v.zone', zone);
   if (Number.isFinite(section)) voterQuery = voterQuery.where('v.section', section);
   if ((zoneInput && !Number.isFinite(zone)) || (sectionInput && !Number.isFinite(section))) {
@@ -1153,7 +1156,7 @@ async function loadElectionIntelligenceReport(req) {
   let tseQuery = knex('election_results')
     .where({ year, office, turn, source: 'TSE' })
     .whereRaw('UPPER(TRIM("candidateName")) = UPPER(?)', [candidateName]);
-  if (city) tseQuery = tseQuery.whereRaw('UPPER(TRIM(city)) LIKE UPPER(?)', [`%${city}%`]);
+  if (city) tseQuery = tseQuery.whereRaw('UPPER(TRIM(city)) = UPPER(?)', [city]);
   if (Number.isFinite(zone)) tseQuery = tseQuery.where('zone', zone);
   if (Number.isFinite(section)) tseQuery = tseQuery.where('section', section);
   if ((zoneInput && !Number.isFinite(zone)) || (sectionInput && !Number.isFinite(section))) {
@@ -1171,6 +1174,7 @@ async function loadElectionIntelligenceReport(req) {
     filters: {
       ...teamFilters,
       city,
+      neighborhood,
       zone: zoneInput,
       section: sectionInput,
     },
@@ -1380,7 +1384,20 @@ function sendScopedSummaryPdf(res, report) {
   doc.end();
 }
 
-function sendGeneralReportPdf(res, report) {
+// Cards de resumo iguais aos do cabecalho do app (buildScopedElectionReports): prometidos,
+// confirmados (entregue), faltantes, % quebra e votos reais da candidata no TSE.
+function scopedMetricCards(totals = {}) {
+  return [
+    { value: totals.prometidos || 0, label: 'PROMETIDOS' },
+    { value: totals.entregue || 0, label: 'CONFIRMADOS (ENTREGUES)' },
+    { value: totals.faltante || 0, label: 'FALTANTES' },
+    { value: formatPercent((totals.quebra || 0) * 100), label: '% DE QUEBRA' },
+    { value: totals.apurado || 0, label: 'VOTOS DA CANDIDATA (TSE)' },
+  ];
+}
+
+// `scoped` e o relatorio de loadScopedElectionReport, o mesmo que alimenta o cabecalho do app.
+function sendGeneralReportPdf(res, report, scoped) {
   const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36, bufferPages: true });
   const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
   res.setHeader('Content-Type', 'application/pdf');
@@ -1388,15 +1405,13 @@ function sendGeneralReportPdf(res, report) {
   doc.pipe(res);
   drawIntelligenceHeader(doc, report, 'RELATÓRIO GERAL DE INTELIGÊNCIA ELEITORAL', 'Promessas, entregas e faltantes por seção');
   drawMetricCards(doc, [
-    { value: report.totals.prometidos, label: 'TOTAL PROMETIDO' },
-    { value: report.totals.entregue, label: 'TOTAL ENTREGUE' },
-    { value: report.totals.faltante, label: 'TOTAL FALTANTE' },
-    { value: formatPercent((report.totals.quebra || 0) * 100), label: '% DE QUEBRA' },
+    ...scopedMetricCards(scoped?.totais || report.totals),
     { value: report.totals.compartilhadas, label: 'SEÇÕES COMPARTILHADAS' },
   ], { height: 52, fontSize: 16, gap: 5 });
 
   doc.font('Helvetica-Bold').fontSize(12).fillColor('#18344B').text('RANKING POR CABO', { width });
-  const caboRows = report.cabos.map((cabo) => [cabo.cabo, formatNumber(cabo.prometidos), formatNumber(cabo.entregue), formatNumber(cabo.faltante), formatPercent((cabo.quebra || 0) * 100)]);
+  const ranking = scoped ? scoped.cabos.map((cabo) => ({ ...cabo, cabo: cabo.name })) : report.cabos;
+  const caboRows = ranking.map((cabo) => [cabo.cabo, formatNumber(cabo.prometidos), formatNumber(cabo.entregue), formatNumber(cabo.faltante), formatPercent((cabo.quebra || 0) * 100)]);
   if (caboRows.length) drawTableWithBackground(doc, ['Cabo', 'Prometidos', 'Entregues', 'Faltantes', '% quebra'], caboRows,
     [width * .34, width * .17, width * .17, width * .17, width * .15], { headerFontSize: 9, bodyFontSize: 9, padding: 4 });
 
@@ -1452,10 +1467,11 @@ function sendGeneralReportPdf(res, report) {
 }
 
 router.get('/inteligencia-eleitoral/relatorio-geral/pdf', requireRole('ADMIN'), async (req, res) => {
-  sendGeneralReportPdf(res, await loadElectionIntelligenceReport(req));
+  const [report, scoped] = await Promise.all([loadElectionIntelligenceReport(req), loadScopedElectionReport(req)]);
+  sendGeneralReportPdf(res, report, scoped);
 });
 
-function sendCaboReportPdf(res, report, caboId) {
+function sendCaboReportPdf(res, report, caboId, scoped) {
   const cabo = (report.cabos || []).find((item) => String(item.id) === String(caboId)) || report.cabos?.[0];
   const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36, bufferPages: true });
   const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
@@ -1466,12 +1482,8 @@ function sendCaboReportPdf(res, report, caboId) {
   if (!cabo) {
     doc.font('Helvetica').fontSize(10).text('Nenhum cabo encontrado para os filtros selecionados.');
   } else {
-    drawMetricCards(doc, [
-      { value: cabo.prometidos, label: 'PROMETIDOS' },
-      { value: cabo.entregue, label: 'ENTREGUES' },
-      { value: cabo.faltante, label: 'FALTANTES' },
-      { value: formatPercent((cabo.quebra || 0) * 100), label: '% DE QUEBRA' },
-    ], { height: 52, fontSize: 16, gap: 6 });
+    const scopedCabo = (scoped?.cabos || []).find((item) => String(item.id) === String(caboId)) || scoped?.cabos?.[0];
+    drawMetricCards(doc, scopedMetricCards(scopedCabo || cabo), { height: 52, fontSize: 16, gap: 6 });
     const subRows = (cabo.subcabos || []).map((sub) => [sub.subcabo, formatNumber(sub.prometidos), formatNumber(sub.secoes), formatNumber(sub.secoesCompartilhadas ?? sub.compartilhadas)]);
     if (subRows.length) drawTableWithBackground(doc, ['Subcabo', 'Promessas', 'Seções', 'Seções compartilhadas'], subRows,
       [width * .48, width * .19, width * .16, width * .17], { headerFontSize: 9, bodyFontSize: 9, padding: 4 });
@@ -1497,10 +1509,11 @@ function sendCaboReportPdf(res, report, caboId) {
 }
 
 router.get('/inteligencia-eleitoral/relatorio-cabo/pdf', requireRole('ADMIN'), async (req, res) => {
-  sendCaboReportPdf(res, await loadElectionIntelligenceReport(req), req.query.caboId);
+  const [report, scoped] = await Promise.all([loadElectionIntelligenceReport(req), loadScopedElectionReport(req)]);
+  sendCaboReportPdf(res, report, req.query.caboId, scoped);
 });
 
-function sendSubcaboReportPdf(res, report, subcaboId) {
+function sendSubcaboReportPdf(res, report, subcaboId, scoped) {
   const subcabo = (report.subcabos || []).find((item) => String(item.id) === String(subcaboId)) || report.subcabos?.[0];
   const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 36, bufferPages: true });
   const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
@@ -1511,13 +1524,11 @@ function sendSubcaboReportPdf(res, report, subcaboId) {
   if (!subcabo) {
     doc.font('Helvetica').fontSize(10).text('Nenhum subcabo encontrado para os filtros selecionados.');
   } else {
+    // Com filtro de subcaboId o relatorio escopado so tem os cadastros desse subcabo: cabos[0] e o total dele.
     drawMetricCards(doc, [
-      { value: subcabo.prometidos, label: 'PROMETIDOS' },
-      { value: subcabo.prometidosExclusivos, label: 'PROMETIDOS EXCLUSIVOS' },
+      ...scopedMetricCards(scoped?.cabos?.[0] || subcabo),
       { value: subcabo.secoesCompartilhadas ?? subcabo.compartilhadas, label: 'SEÇÕES COMPARTILHADAS' },
-    ], { height: 52, fontSize: 16, gap: 8 });
-    doc.font('Helvetica').fontSize(9).fillColor('#52677A')
-      .text(`Entregue: ${formatNumber(subcabo.entregue)} | Faltante: ${formatNumber(subcabo.faltante)} (somente seções exclusivas)`, { width });
+    ], { height: 52, fontSize: 16, gap: 5 });
     const hierarchies = (report.hierarchy || []).filter((cabo) => cabo.cabo === subcabo.cabo);
     for (const hierarchy of hierarchies) for (const team of hierarchy.subcabos || []) {
       if (team.subcabo !== subcabo.subcabo) continue;
@@ -1551,7 +1562,8 @@ function sendSubcaboReportPdf(res, report, subcaboId) {
 }
 
 router.get('/inteligencia-eleitoral/relatorio-subcabo/pdf', requireRole('ADMIN'), async (req, res) => {
-  sendSubcaboReportPdf(res, await loadElectionIntelligenceReport(req), req.query.subcaboId);
+  const [report, scoped] = await Promise.all([loadElectionIntelligenceReport(req), loadScopedElectionReport(req)]);
+  sendSubcaboReportPdf(res, report, req.query.subcaboId, scoped);
 });
 
 function sendSingleVoteReportPdf(res, report) {

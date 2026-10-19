@@ -72,3 +72,19 @@ test('secao com eleitores de dois cabos conta uma vez no total geral', () => {
   assert.equal(report.totais.entregue, 1);
   assert.equal(report.totais.faltante, 1);
 });
+
+test('apurado soma os votos TSE das seções uma vez, no cabo e no total', () => {
+  const report = buildScopedElectionReports({
+    voters: [
+      voter({ creatorId: 2, creatorName: 'Solange', creatorRole: 'SUBCABO', caboId: 1, caboName: 'Felipe' }),
+      voter({ creatorId: 3, creatorName: 'André', creatorRole: 'SUBCABO', caboId: 1, caboName: 'Felipe' }),
+      voter({ section: 534 }),
+    ],
+    tseRows: [
+      { city: 'Fortaleza', zone: 120, section: 533, total: 40 },
+      { city: 'Fortaleza', zone: 120, section: 534, total: 7 },
+    ],
+  });
+  assert.equal(report.cabos[0].apurado, 47);
+  assert.equal(report.totais.apurado, 47);
+});

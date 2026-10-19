@@ -154,6 +154,7 @@ function buildScopedElectionReports({ voters = [], tseRows = [], candidateName =
       ...totals,
       compartilhadas: cabo.sections.filter((section) => section.compartilhada).length,
       quebra: quebra(totals),
+      apurado: cabo.sections.reduce((sum, section) => sum + (section.apuracaoDisponivel ? section.apuradoTseNaSecao : 0), 0),
       secoes: cabo.sections.length,
       secoesComFaltantes: cabo.sections.filter((section) => section.faltante > 0).length,
       subcabos: [...cabo.subcabos.values()].sort(descending),
@@ -175,6 +176,7 @@ function buildScopedElectionReports({ voters = [], tseRows = [], candidateName =
   }));
   const totais = sumDeliveries(secoesUnicas);
   totais.quebra = quebra(totais);
+  totais.apurado = secoesUnicas.reduce((sum, local) => sum + (local.apuracaoDisponivel ? local.apuradoTseNaSecao : 0), 0);
 
   const rank = new Map(rankedCabos.map((cabo, index) => [cabo.id, index]));
   const cityCounts = new Map();
